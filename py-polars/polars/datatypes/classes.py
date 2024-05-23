@@ -398,6 +398,10 @@ class Date(TemporalType):
     The underlying representation of this type is a 32-bit signed integer.
     The integer indicates the number of days since the Unix epoch (1970-01-01).
     The number can be negative to indicate dates before the epoch.
+
+    Values of this time are constructed using the standard Python
+    `datetime.date
+    <https://docs.python.org/3/library/datetime.html#datetime.date>` class.
     """
 
 
@@ -409,6 +413,9 @@ class Time(TemporalType):
     -----
     The underlying representation of this type is a 64-bit signed integer.
     The integer indicates the number of nanoseconds since midnight.
+
+    Values of this time are constructed using the standard Python `time
+    <https://docs.python.org/3/library/time.html>` module.
     """
 
 
@@ -432,6 +439,10 @@ class Datetime(TemporalType):
     The integer indicates the number of time units since the Unix epoch
     (1970-01-01 00:00:00). The number can be negative to indicate datetimes before the
     epoch.
+
+    Values of this time are constructed using the standard Python
+    `datetime.datetime
+    <https://docs.python.org/3/library/datetime.html#datetime.datetime>` class.
     """
 
     time_unit: TimeUnit | None = None
@@ -499,6 +510,10 @@ class Duration(TemporalType):
     The underlying representation of this type is a 64-bit signed integer.
     The integer indicates an amount of time units and can be negative to indicate
     negative time offsets.
+
+    Values of this time are constructed using the standard Python
+    `datetime.timedelta
+    <https://docs.python.org/3/library/datetime.html#datetime.timedelta>` class.
     """
 
     time_unit: TimeUnit | None = None
