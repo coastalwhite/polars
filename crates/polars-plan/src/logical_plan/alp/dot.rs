@@ -6,7 +6,7 @@ use crate::constants::UNLIMITED_CACHE;
 use crate::prelude::alp::format::ColumnsDisplay;
 use crate::prelude::*;
 
-pub struct IRDotDisplay<'a>(pub(crate) IRPlanRef<'a>);
+pub struct IRDotDisplay<'a>(IRPlanRef<'a>);
 
 const INDENT: &str = "  ";
 
@@ -43,6 +43,14 @@ fn write_label<'a, 'b>(
 }
 
 impl<'a> IRDotDisplay<'a> {
+    pub fn new(lp: IRPlanRef<'a>) -> Self {
+        if let Some(streaming_lp) = lp.extract_streaming_plan() {
+            return Self(streaming_lp);
+        }
+
+        Self(lp)
+    }
+
     fn with_root(&self, root: Node) -> Self {
         Self(self.0.with_root(root))
     }

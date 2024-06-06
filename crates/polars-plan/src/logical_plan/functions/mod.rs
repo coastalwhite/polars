@@ -61,7 +61,7 @@ pub enum FunctionNode {
     Pipeline {
         function: Arc<dyn DataFrameUdfMut>,
         schema: SchemaRef,
-        original: Option<Arc<DslPlan>>,
+        original: Option<Arc<IRPlan>>,
     },
     Unnest {
         columns: Arc<[Arc<str>]>,
@@ -327,8 +327,7 @@ impl Display for FunctionNode {
             MergeSorted { .. } => write!(f, "MERGE SORTED"),
             Pipeline { original, .. } => {
                 if let Some(original) = original {
-                    let ir_plan = original.as_ref().clone().to_alp().unwrap();
-                    let ir_display = ir_plan.display();
+                    let ir_display = original.as_ref().display();
 
                     writeln!(f, "--- STREAMING")?;
                     write!(f, "{ir_display}")?;

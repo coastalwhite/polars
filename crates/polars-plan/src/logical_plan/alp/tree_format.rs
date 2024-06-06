@@ -102,6 +102,15 @@ fn multiline_expression(expr: &str) -> std::borrow::Cow<'_, str> {
 
 impl<'a> TreeFmtNode<'a> {
     pub fn root_logical_plan(lp: IRPlanRef<'a>) -> Self {
+        if let Some(streaming_lp) = lp.extract_streaming_plan() {
+            return Self {
+                h: Some("Streaming".to_string()),
+                content: TreeFmtNodeContent::LogicalPlan(streaming_lp.lp_top),
+
+                lp: streaming_lp,
+            };
+        }
+
         Self {
             h: None,
             content: TreeFmtNodeContent::LogicalPlan(lp.lp_top),
