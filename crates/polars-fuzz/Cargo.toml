@@ -1,0 +1,15 @@
+[package]
+name = "polars-fuzz"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords = ["dataframe", "query-engine", "arrow"]
+license.workspace = true
+readme = "../../README.md"
+repository.workspace = true
+description = "DataFrame library based on Apache Arrow"
+
+[dependencies]
+polars = { workspace = true, features = [ "lazy" ] }
+rand.workspace = true
