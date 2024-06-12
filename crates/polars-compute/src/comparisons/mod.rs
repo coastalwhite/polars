@@ -73,6 +73,7 @@ pub trait TotalOrdKernel: Sized + Array {
 }
 
 mod null;
+mod offsets;
 mod scalar;
 mod struct_;
 mod view;

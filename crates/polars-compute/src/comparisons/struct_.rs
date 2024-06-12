@@ -1,5 +1,6 @@
 use arrow::array::{
-    Array, BinaryViewArray, BooleanArray, NullArray, PrimitiveArray, StructArray, Utf8ViewArray,
+    Array, BinaryViewArray, BooleanArray, ListArray, NullArray, PrimitiveArray, StructArray,
+    Utf8ViewArray,
 };
 use arrow::bitmap::Bitmap;
 use arrow::datatypes::ArrowDataType;
@@ -76,8 +77,8 @@ macro_rules! compare {
                 PH::LargeBinary => todo!("Comparison of Struct with LargeBinary are not yet supported"),
                 PH::Utf8 => todo!("Comparison of Struct with Utf8 are not yet supported"),
                 PH::LargeUtf8 => todo!("Comparison of Struct with LargeUtf8 are not yet supported"),
-                PH::List => todo!("Comparison of Struct with List are not yet supported"),
-                PH::LargeList => todo!("Comparison of Struct with LargeList are not yet supported"),
+                PH::List => call_binary!(ListArray<i32>, lv, rv, $op),
+                PH::LargeList => call_binary!(ListArray<i64>, lv, rv, $op),
                 PH::Struct => call_binary!(StructArray, lv, rv, $op),
                 PH::Union => todo!("Comparison of Struct with Union are not yet supported"),
                 PH::Map => todo!("Comparison of Struct with Map are not yet supported"),
