@@ -1,0 +1,6 @@
+﻿polars.exceptions.ModuleUpgradeRequired
+=======================================
+
+.. currentmodule:: polars.exceptions
+
+.. autoexception:: ModuleUpgradeRequired
