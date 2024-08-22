@@ -17,6 +17,7 @@ use super::fixed_len_bytes::{
 };
 use super::pages::PrimitiveNested;
 use super::primitive::{
+    ArrayContext,
     build_statistics as primitive_build_statistics, encode_plain as primitive_encode_plain,
 };
 use super::{binview, nested, Nested, WriteOptions};
@@ -313,7 +314,7 @@ macro_rules! dyn_prim {
     ($from:ty, $to:ty, $array:expr, $options:expr, $type_:expr) => {{
         let values = $array.values().as_any().downcast_ref().unwrap();
 
-        let buffer = primitive_encode_plain::<$from, $to>(values, false, vec![]);
+        let buffer = primitive_encode_plain::<$from, $to>(values, ArrayContext::Required, vec![]);
 
         let stats: Option<ParquetStatistics> = if !$options.statistics.is_empty() {
             let mut stats = primitive_build_statistics::<$from, $to>(

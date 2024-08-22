@@ -10,6 +10,7 @@ use crate::parquet::encoding::Encoding;
 use crate::parquet::page::DataPage;
 use crate::parquet::schema::types::PrimitiveType;
 use crate::parquet::types::NativeType;
+use crate::write::primitive::ArrayContext;
 
 pub fn array_to_page<T, R>(
     array: &PrimitiveArray<T>,
@@ -22,14 +23,23 @@ where
     R: NativeType,
     T: num_traits::AsPrimitive<R>,
 {
+    let materialize_nulls = Nested::do_materialize_nulls(&nested);
     let is_optional = is_nullable(&type_.field_info);
+
+    let ctx = ArrayContext::new(is_optional, materialize_nulls);
 
     let mut buffer = vec![];
 
     let (repetition_levels_byte_length, definition_levels_byte_length) =
         nested::write_rep_and_def(options.version, nested, &mut buffer)?;
 
-    let buffer = encode_plain(array, is_optional, buffer);
+    dbg!(ctx);
+    dbg!(array);
+
+    let prev_len = buffer.len();
+    let buffer = encode_plain(array, ctx, buffer);
+
+    dbg!(&buffer[prev_len..]);
 
     let statistics = if options.has_statistics() {
         Some(build_statistics(array, type_.clone(), &options.statistics).serialize())
@@ -39,7 +49,7 @@ where
 
     utils::build_plain_page(
         buffer,
-        nested::num_values(nested),
+        dbg!(nested::num_values(nested)),
         nested[0].len(),
         array.null_count(),
         repetition_levels_byte_length,

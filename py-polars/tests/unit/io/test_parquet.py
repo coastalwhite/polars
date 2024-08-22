@@ -19,6 +19,7 @@ import polars as pl
 from polars.exceptions import ComputeError
 from polars.testing import assert_frame_equal, assert_series_equal
 from polars.testing.parametric import dataframes
+from polars.testing.parametric.strategies.core import column
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1571,3 +1572,142 @@ def test_predicate_filtering(
 
     result = pl.scan_parquet(f, parallel=parallel_st).filter(expr).collect()
     assert_frame_equal(result, df.filter(expr))
+
+
+@given(
+    df=dataframes(
+        min_size=0, max_size=100, min_cols=2, max_cols=5,
+        allowed_dtypes=[pl.String, pl.Binary],
+        include_cols=[
+            column('filter_col', pl.Int8, st.integers(0, 1), allow_null=False)
+        ]
+    ),
+)
+@settings(
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@pytest.mark.write_disk()
+def test_delta_length_byte_array_prefiltering(
+    tmp_path: Path,
+    df: pl.DataFrame,
+) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    f = tmp_path / "test.parquet"
+
+    cols = df.columns
+
+    encodings = { col: 'DELTA_LENGTH_BYTE_ARRAY' for col in cols }
+    encodings['filter_col'] = 'PLAIN'
+
+    pq.write_table(
+        df.to_arrow(),
+        f,
+        use_dictionary=False,
+        column_encoding=encodings,
+    )
+
+    expr = pl.col('filter_col') == 0
+    result = pl.scan_parquet(f, parallel='prefiltered').filter(expr).collect()
+    assert_frame_equal(result, df.filter(expr))
+
+
+@given(
+    df=dataframes(
+        min_size=0, max_size=10, min_cols=1, max_cols=5,
+        excluded_dtypes=[pl.Decimal, pl.Categorical, pl.Enum],
+        include_cols=[
+            column('filter_col', pl.Int8, st.integers(0, 1), allow_null=False)
+        ]
+    ),
+)
+@settings(
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@pytest.mark.write_disk()
+def test_general_prefiltering(
+    tmp_path: Path,
+    df: pl.DataFrame,
+) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    f = tmp_path / "test.parquet"
+
+    df.write_parquet(f)
+
+    # print(df)
+
+    expr = pl.col('filter_col') == 0
+
+    # print(pl.scan_parquet(f, parallel='prefiltered').filter(expr).collect())
+    # print(df.filter(expr))
+
+    result = pl.scan_parquet(f, parallel='prefiltered').filter(expr).collect()
+    assert_frame_equal(result, df.filter(expr))
+
+
+@pytest.mark.write_disk()
+def test_struct_prefiltered(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    f = tmp_path / "test.parquet"
+
+    df = pl.DataFrame({ 'a': { 'x': 1, 'y': 2 } })
+    df.write_parquet(f)
+
+    (
+        pl.scan_parquet(f, parallel='prefiltered')
+            .filter(pl.col('a').struct.field('x') == 1)
+            .collect()
+    )
+
+
+@pytest.mark.parametrize("data", [
+    ([{ 'x': "" }, { 'x': "0" }], pa.struct([ pa.field('x', pa.string(), nullable=True) ])),
+    ([{ 'x': "" }, { 'x': "0" }], pa.struct([ pa.field('x', pa.string(), nullable=False) ])),
+    ([[""], ["0"]], pa.list_(pa.field('item', pa.string(), nullable=False))),
+    ([[""], ["0"]], pa.list_(pa.field('item', pa.string(), nullable=True))),
+    ([[""], ["0"]], pa.list_(pa.field('item', pa.string(), nullable=False), 1)),
+    ([[""], ["0"]], pa.list_(pa.field('item', pa.string(), nullable=True), 1)),
+    ([["", "1"], ["0", "2"]], pa.list_(pa.string(), 2)),
+])
+@pytest.mark.parametrize("nullable", [False, True])
+@pytest.mark.write_disk()
+def test_nested_skip_18303(data: tuple, nullable: bool, tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    f = tmp_path / "test.parquet"
+
+    schema = pa.schema([ pa.field('a', data[1], nullable = nullable) ])
+    tb = pa.table({ 'a': data[0] }, schema=schema)
+    pq.write_table(tb, f)
+
+    scanned = pl.scan_parquet(f).slice(1, 1).collect()
+
+    assert_frame_equal(scanned, pl.DataFrame(tb).slice(1, 1))
+
+
+@given(
+    df=dataframes(
+        min_size=1, max_size=5, min_cols=1, max_cols=1,
+        excluded_dtypes=[pl.Decimal, pl.Categorical, pl.Enum],
+    ),
+    offset=st.integers(0, 100),
+    length=st.integers(0, 100),
+)
+@settings(
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@pytest.mark.write_disk()
+def test_slice_roundtrip(df: pl.DataFrame, offset: int, length: int, tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    f = tmp_path / "test.parquet"
+
+    offset %= (df.height + 1)
+    length %= (df.height - offset + 1)
+
+    print(df)
+    print(f"slice({offset}, {length})")
+
+    df.write_parquet(f)
+
+    scanned = pl.scan_parquet(f).slice(offset, length).collect()
+    assert_frame_equal(scanned, df.slice(offset, length))

@@ -123,6 +123,14 @@ impl Nested {
             length,
         })
     }
+
+    pub fn do_materialize_nulls(nested: &[Nested]) -> bool {
+        match &nested[nested.len() - 2] {
+            Nested::Primitive(_) => unreachable!(),
+            Nested::List(_) | Nested::LargeList(_) => false,
+            Nested::FixedSizeList(_) | Nested::Struct(_) => true,
+        }
+    }
 }
 
 /// Constructs the necessary `Vec<Vec<Nested>>` to write the rep and def levels of `array` to parquet

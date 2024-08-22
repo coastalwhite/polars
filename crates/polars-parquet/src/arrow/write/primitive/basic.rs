@@ -15,9 +15,34 @@ use crate::parquet::types::NativeType as ParquetNativeType;
 use crate::read::Page;
 use crate::write::StatisticsOptions;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ArrayContext {
+    Required,
+    Optional,
+    OptionalMaterializeNulls,
+}
+
+impl ArrayContext {
+    pub(crate) fn new(is_optional: bool, materialize_nulls: bool) -> Self {
+        match (is_optional, materialize_nulls) {
+            (true, true) => Self::OptionalMaterializeNulls,
+            (true, false) => Self::Optional,
+            (false, _) => Self::Required,
+        }
+    }
+
+    fn is_optional(self) -> bool {
+        !matches!(self, Self::Required)
+    }
+
+    fn do_materialize_nulls(self) -> bool {
+        matches!(self, Self::OptionalMaterializeNulls)
+    }
+}
+
 pub(crate) fn encode_plain<T, P>(
     array: &PrimitiveArray<T>,
-    is_optional: bool,
+    ctx: ArrayContext,
     mut buffer: Vec<u8>,
 ) -> Vec<u8>
 where
@@ -25,6 +50,9 @@ where
     P: ParquetNativeType,
     T: num_traits::AsPrimitive<P>,
 {
+    let is_optional = ctx.is_optional();
+    let do_materialize_nulls = ctx.do_materialize_nulls();
+
     if is_optional {
         // append the non-null values
         let validity = array.validity();
@@ -34,24 +62,34 @@ where
 
             if null_count > 0 {
                 let values = array.values().as_slice();
-                let mut iter = validity.iter();
 
-                buffer.reserve(std::mem::size_of::<P>() * (array.len() - null_count));
-
-                let mut offset = 0;
-                let mut remaining_valid = array.len() - null_count;
-                while remaining_valid > 0 {
-                    let num_valid = iter.take_leading_ones();
+                if do_materialize_nulls {
+                    buffer.reserve(size_of::<P::Bytes>() * array.len());
                     buffer.extend(
-                        values[offset..offset + num_valid]
+                        values[..array.len()]
                             .iter()
                             .flat_map(|value| value.as_().to_le_bytes()),
                     );
-                    remaining_valid -= num_valid;
-                    offset += num_valid;
+                } else {
+                    buffer.reserve(size_of::<P::Bytes>() * (array.len() - null_count));
 
-                    let num_invalid = iter.take_leading_zeros();
-                    offset += num_invalid;
+                    let mut iter = validity.iter();
+
+                    let mut offset = 0;
+                    let mut remaining_valid = array.len() - null_count;
+                    while remaining_valid > 0 {
+                        let num_valid = iter.take_leading_ones();
+                        buffer.extend(
+                            values[offset..offset + num_valid]
+                                .iter()
+                                .flat_map(|value| value.as_().to_le_bytes()),
+                        );
+                        remaining_valid -= num_valid;
+                        offset += num_valid;
+
+                        let num_invalid = iter.take_leading_zeros();
+                        offset += num_invalid;
+                    }
                 }
 
                 return buffer;
@@ -72,7 +110,7 @@ where
 
 pub(crate) fn encode_delta<T, P>(
     array: &PrimitiveArray<T>,
-    is_optional: bool,
+    ctx: ArrayContext,
     mut buffer: Vec<u8>,
 ) -> Vec<u8>
 where
@@ -81,6 +119,13 @@ where
     T: num_traits::AsPrimitive<P>,
     P: num_traits::AsPrimitive<i64>,
 {
+    let is_optional = ctx.is_optional();
+    let do_materialize_nulls = ctx.do_materialize_nulls();
+
+    if do_materialize_nulls {
+        todo!();
+    }
+
     if is_optional {
         // append the non-null values
         let iterator = array.non_null_values_iter().map(|x| {
@@ -135,7 +180,7 @@ where
     .map(Page::Data)
 }
 
-pub fn array_to_page<T, P, F: Fn(&PrimitiveArray<T>, bool, Vec<u8>) -> Vec<u8>>(
+pub fn array_to_page<T, P, F: Fn(&PrimitiveArray<T>, ArrayContext, Vec<u8>) -> Vec<u8>>(
     array: &PrimitiveArray<T>,
     options: WriteOptions,
     type_: PrimitiveType,
@@ -149,6 +194,7 @@ where
     T: num_traits::AsPrimitive<P>,
 {
     let is_optional = is_nullable(&type_.field_info);
+    let ctx = ArrayContext::new(is_optional, false);
 
     let validity = array.validity();
 
@@ -163,7 +209,7 @@ where
 
     let definition_levels_byte_length = buffer.len();
 
-    let buffer = encode(array, is_optional, buffer);
+    let buffer = encode(array, ctx, buffer);
 
     let statistics = if options.has_statistics() {
         Some(build_statistics(array, type_.clone(), &options.statistics).serialize())

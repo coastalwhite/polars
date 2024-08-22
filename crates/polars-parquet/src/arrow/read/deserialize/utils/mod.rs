@@ -124,7 +124,13 @@ impl<'a, D: Decoder> State<'a, D> {
                     let start = range.start;
                     let end = range.end;
 
+                    dbg!(range);
+                    dbg!(self.len());
+
                     self.skip_in_place(start)?;
+
+                    dbg!(self.len());
+
                     debug_assert!(end - start <= self.len());
                     self.translation.extend_from_state(
                         decoder,
@@ -195,7 +201,7 @@ pub struct BatchedCollector<'a, I, T, C: BatchableCollector<I, T>> {
     num_waiting_invalids: usize,
 
     target: &'a mut T,
-    collector: C,
+    pub(crate) collector: C,
     _pd: std::marker::PhantomData<I>,
 }
 
