@@ -39,7 +39,7 @@ where
     type PlainDecoder = ArrayChunks<'a, P>;
 
     fn new(
-        _decoder: &IntDecoder<P, T, D>,
+        _decoder: &mut IntDecoder<P, T, D>,
         page: &'a DataPage,
         dict: Option<&'a <IntDecoder<P, T, D> as utils::Decoder>::Dict>,
         _page_validity: Option<&PageValidity<'a>>,

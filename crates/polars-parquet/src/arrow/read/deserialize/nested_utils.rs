@@ -776,7 +776,7 @@ impl<D: utils::NestedDecoder> PageNestedDecoder<D> {
                     let page = page.decompress(&mut self.iter)?;
 
                     let mut state =
-                        utils::State::new_nested(&self.decoder, &page, self.dict.as_ref())?;
+                        utils::State::new_nested(&mut self.decoder, &page, self.dict.as_ref())?;
                     let (def_iter, rep_iter) = level_iters(&page)?;
 
                     // @TODO: move this to outside the loop.
@@ -861,7 +861,7 @@ impl<D: utils::NestedDecoder> PageNestedDecoder<D> {
                             debug_assert!(limit < rep_iter.len());
 
                             state =
-                                utils::State::new_nested(&self.decoder, &page, self.dict.as_ref())?;
+                                utils::State::new_nested(&mut self.decoder, &page, self.dict.as_ref())?;
                             batched_collector = BatchedCollector::new(
                                 BatchedNestedDecoder {
                                     state: &mut state,
@@ -892,7 +892,7 @@ impl<D: utils::NestedDecoder> PageNestedDecoder<D> {
                             }
 
                             state =
-                                utils::State::new_nested(&self.decoder, &page, self.dict.as_ref())?;
+                                utils::State::new_nested(&mut self.decoder, &page, self.dict.as_ref())?;
                             batched_collector = BatchedCollector::new(
                                 BatchedNestedDecoder {
                                     state: &mut state,

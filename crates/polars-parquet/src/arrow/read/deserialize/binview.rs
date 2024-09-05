@@ -1,5 +1,4 @@
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use arrow::array::{
     Array, BinaryViewArray, DictionaryArray, DictionaryKey, MutableBinaryViewArray, PrimitiveArray,
@@ -21,10 +20,10 @@ use crate::read::PrimitiveLogicalType;
 type DecodedStateTuple = (MutableBinaryViewArray<[u8]>, MutableBitmap);
 
 impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
-    type PlainDecoder = BinaryIter<'a>;
+    type PlainDecoder = PlainTranslationState<'a>;
 
     fn new(
-        decoder: &BinViewDecoder,
+        decoder: &mut BinViewDecoder,
         page: &'a DataPage,
         dict: Option<&'a <BinViewDecoder as utils::Decoder>::Dict>,
         _page_validity: Option<&PageValidity<'a>>,
@@ -33,13 +32,37 @@ impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
             page.descriptor.primitive_type.logical_type,
             Some(PrimitiveLogicalType::String)
         );
-        decoder.check_utf8.store(is_string, Ordering::Relaxed);
+
+        decoder.check_utf8 = is_string;
+
         match (page.encoding(), dict) {
             (Encoding::Plain, _) => {
                 let values = split_buffer(page)?.values;
-                let values = BinaryIter::new(values, page.num_values());
+                assert!(values.len() <= u32::MAX as usize, "Page size >= 4GB");
+                let mut offset = 0;
+                let mut iter = BinaryIter::new(values, page.num_values());
+                decoder.offsets_scratch.clear();
+                decoder.offsets_scratch.reserve(page.num_values() + 1);
+                decoder.offsets_scratch.extend(iter.by_ref().map(|v| {
+                    let current_offset = offset;
+                    offset += 4 + v.len();
+                    current_offset as u32
+                }));
+                decoder.offsets_scratch.push(values.len() as u32);
 
-                Ok(Self::Plain(values))
+                if !iter.values.is_empty() || decoder.offsets_scratch.len() - 1 != page.num_values()
+                {
+                    return Err(ParquetError::oos(
+                        "Plain BYTE_ARRAY buffer does not match number of values in header",
+                    ));
+                }
+
+                Ok(Self::Plain(PlainTranslationState {
+                    values,
+                    index: 0,
+                    len: page.num_values(),
+                    has_flushed: false,
+                }))
             },
             (Encoding::PlainDictionary | Encoding::RleDictionary, Some(_)) => {
                 let values = dict_indices_decoder(page)?;
@@ -64,7 +87,7 @@ impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
 
     fn len_when_not_nullable(&self) -> usize {
         match self {
-            Self::Plain(v) => v.len_when_not_nullable(),
+            Self::Plain(v) => v.len - v.index,
             Self::Dictionary(v) => v.len(),
             Self::DeltaLengthByteArray(v, _) => v.len(),
             Self::DeltaBytes(v) => v.len(),
@@ -77,7 +100,7 @@ impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
         }
 
         match self {
-            Self::Plain(t) => _ = t.by_ref().nth(n - 1),
+            Self::Plain(t) => t.index = usize::min(t.len, t.index + n),
             Self::Dictionary(t) => t.skip_in_place(n)?,
             Self::DeltaLengthByteArray(t, _) => t.skip_in_place(n)?,
             Self::DeltaBytes(t) => t.skip_in_place(n)?,
@@ -98,7 +121,7 @@ impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
         let views_offset = decoded.0.views().len();
         let buffer_offset = decoded.0.completed_buffers().len();
 
-        let mut validate_utf8 = decoder.check_utf8.load(Ordering::Relaxed);
+        let mut validate_utf8 = decoder.check_utf8;
 
         match self {
             Self::Plain(page_values) => {
@@ -195,13 +218,22 @@ impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
 
 #[derive(Default)]
 pub(crate) struct BinViewDecoder {
-    check_utf8: AtomicBool,
+    check_utf8: bool,
+    offsets_scratch: Vec<u32>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PlainTranslationState<'a> {
+    values: &'a [u8],
+    index: usize,
+    len: usize,
+    has_flushed: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub(crate) enum StateTranslation<'a> {
-    Plain(BinaryIter<'a>),
+    Plain(PlainTranslationState<'a>),
     Dictionary(hybrid_rle::HybridRleDecoder<'a>),
     DeltaLengthByteArray(delta_length_byte_array::Decoder<'a>, Vec<u32>),
     DeltaBytes(delta_byte_array::Decoder<'a>),
@@ -585,7 +617,7 @@ impl utils::Decoder for BinViewDecoder {
 
         buffers.push(Buffer::from(buffer));
 
-        if self.check_utf8.load(Ordering::Relaxed) {
+        if self.check_utf8 {
             // This is a small trick that allows us to check the Parquet buffer instead of the view
             // buffer. Batching the UTF-8 verification is more performant. For this to be allowed,
             // all the interleaved lengths need to be valid UTF-8.
@@ -613,11 +645,18 @@ impl utils::Decoder for BinViewDecoder {
         page_validity: Option<&mut PageValidity<'a>>,
         limit: usize,
     ) -> ParquetResult<()> {
-        let views_offset = values.views().len();
-        let buffer_offset = values.completed_buffers().len();
+        if !page_values.has_flushed {
+            values.finish_in_progress();
+
+            // SAFETY:
+            // Reserving does not break any invariants of MutableBinaryViewArray
+            unsafe { values.in_progress_buffer() }.reserve(page_values.values.len());
+            page_values.has_flushed = true;
+        }
 
         struct Collector<'a, 'b> {
-            iter: &'b mut BinaryIter<'a>,
+            state: &'b mut PlainTranslationState<'a>,
+            offsets: &'b [u32],
             max_length: &'b mut usize,
         }
 
@@ -631,10 +670,32 @@ impl utils::Decoder for BinViewDecoder {
                 target: &mut MutableBinaryViewArray<[u8]>,
                 n: usize,
             ) -> ParquetResult<()> {
-                for x in self.iter.take(n) {
-                    *self.max_length = usize::max(*self.max_length, x.len());
-                    target.push_value(x);
+                let buffer_idx = target.completed_buffers().len() as u32;
+                let mut buffer = std::mem::take(unsafe { target.in_progress_buffer() });
+                let mut views = unsafe { target.views_mut() };
+
+                let copy_stats = copy_n_strings_to_binview_buffer(
+                    self.state.values,
+                    &mut buffer,
+                    &mut views,
+                    buffer_idx,
+                    self.offsets,
+                    self.state.index,
+                    n,
+                );
+
+                *self.max_length = usize::max(*self.max_length, copy_stats.max_length);
+                self.state.index = usize::min(self.state.index + n, self.state.len);
+
+                unsafe {
+                    *target.in_progress_buffer() = buffer;
+                    target
+                        .set_total_bytes_len(target.total_bytes_len() + copy_stats.total_bytes_len);
+                    target.set_total_buffer_len(
+                        target.total_buffer_len() + copy_stats.total_buffer_len,
+                    );
                 }
+
                 Ok(())
             }
 
@@ -648,17 +709,17 @@ impl utils::Decoder for BinViewDecoder {
             }
 
             fn skip_in_place(&mut self, n: usize) -> ParquetResult<()> {
-                if n > 0 {
-                    _ = self.iter.nth(n - 1);
-                }
+                self.state.index += n;
                 Ok(())
             }
         }
 
         let mut max_length = 0;
+        let in_progress_buffer_start_len = unsafe { values.in_progress_buffer() }.len();
         let buffer = page_values.values;
         let mut collector = Collector {
-            iter: page_values,
+            state: page_values,
+            offsets: &self.offsets_scratch,
             max_length: &mut max_length,
         };
 
@@ -675,9 +736,7 @@ impl utils::Decoder for BinViewDecoder {
             },
         }
 
-        let buffer = &buffer[..buffer.len() - page_values.values.len()];
-
-        if self.check_utf8.load(Ordering::Relaxed) {
+        if self.check_utf8 {
             // This is a small trick that allows us to check the Parquet buffer instead of the view
             // buffer. Batching the UTF-8 verification is more performant. For this to be allowed,
             // all the interleaved lengths need to be valid UTF-8.
@@ -685,14 +744,22 @@ impl utils::Decoder for BinViewDecoder {
             // Every strings prepended by 4 bytes (L, 0, 0, 0), since we check here L < 128. L is
             // only a valid first byte of a UTF-8 code-point and (L, 0, 0, 0) is valid UTF-8.
             // Consequently, it is valid to just check the whole buffer.
-            if max_length < 128 {
-                simdutf8::basic::from_utf8(buffer)
-                    .map_err(|_| ParquetError::oos("String data contained invalid UTF-8"))?;
+            let buffer = if max_length < 128 {
+                &buffer[..buffer.len() - page_values.values.len()]
             } else {
-                values
-                    .validate_utf8(buffer_offset, views_offset)
-                    .map_err(|_| ParquetError::oos("String data contained invalid UTF-8"))?
-            }
+                // @TODO: Verify inlined views.
+
+                &(unsafe { values.in_progress_buffer() })[in_progress_buffer_start_len..]
+            };
+
+            simdutf8::basic::from_utf8(buffer)
+                .map_err(|_| {
+                    let err = std::str::from_utf8(buffer).unwrap_err();
+                    let o = err.valid_up_to();
+
+                    dbg!(&buffer[o.saturating_sub(16)..(o + 16).min(buffer.len())]);
+                    ParquetError::oos("String data contained invalid UTF-8")
+                })?;
         }
 
         Ok(())
@@ -940,11 +1007,6 @@ impl<'a> BinaryIter<'a> {
             max_num_values,
         }
     }
-
-    /// Return the length of the iterator when the data is not nullable.
-    pub fn len_when_not_nullable(&self) -> usize {
-        self.max_num_values
-    }
 }
 
 impl<'a> Iterator for BinaryIter<'a> {
@@ -969,5 +1031,164 @@ impl<'a> Iterator for BinaryIter<'a> {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (0, Some(self.max_num_values))
+    }
+}
+
+struct CopyStats {
+    total_buffer_len: usize,
+    total_bytes_len: usize,
+    max_length: usize,
+}
+
+fn copy_part(tgt: &mut Vec<u8>, start: usize, length: usize, offsets: &[u32], values: &[u8]) {
+    let start_offset = offsets[start] as usize;
+    let end_offset = offsets[start + length] as usize;
+
+    let start_length = tgt.len();
+    tgt.extend_from_slice(&values[start_offset..end_offset]);
+
+    for idx in start..start + length {
+        let idx_offset = offsets[idx] as usize;
+        let length = offsets[idx + 1] as usize - idx_offset - 4;
+
+        if length >= 128 {
+            let length_offset = start_length + idx_offset - start_offset;
+            tgt[length_offset..length_offset + 4].copy_from_slice(&[0u8; 4]);
+        }
+    }
+}
+
+fn copy_n_strings_to_binview_buffer(
+    values: &[u8],
+    buffer: &mut Vec<u8>,
+    views: &mut Vec<View>,
+    buffer_idx: u32,
+    offsets: &[u32],
+    start: usize,
+    limit: usize,
+) -> CopyStats {
+    let mut total_buffer_len = 0;
+    let mut total_bytes_len = 0;
+
+    let limit = usize::min(limit, offsets.len() - 1 - start);
+    let iter = offsets[start..start + limit + 1]
+        .windows(2)
+        .enumerate()
+        .map(|(i, offsets)| (start + i, offsets[0] + 4, offsets[1] - offsets[0] - 4));
+
+    let mut max_length = 0usize;
+    let mut start_copy_index = start;
+
+    views.extend(iter.map(|(i, offset, length)| {
+        let offset = offset as usize;
+        let length = length as usize;
+
+        max_length = usize::max(max_length, length);
+
+        let bytes = &values[offset..][..length];
+
+        total_bytes_len += bytes.len();
+
+        if length > View::MAX_INLINE_SIZE as usize {
+            let in_buffer_offset = offset as u32 - offsets[start_copy_index];
+            let view =
+                View::new_from_bytes(bytes, buffer_idx, buffer.len() as u32 + in_buffer_offset);
+
+            total_buffer_len += bytes.len() + 4;
+
+            view
+        } else {
+            if start_copy_index != i {
+                copy_part(
+                    buffer,
+                    start_copy_index,
+                    i - start_copy_index,
+                    offsets,
+                    values,
+                );
+            }
+
+            start_copy_index = i + 1;
+            View::new_inline(bytes)
+        }
+    }));
+
+    if start_copy_index != start + limit {
+        copy_part(
+            buffer,
+            start_copy_index,
+            start + limit - start_copy_index,
+            offsets,
+            values,
+        );
+    }
+
+    CopyStats {
+        total_buffer_len,
+        total_bytes_len,
+        max_length,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_buffer_and_offsets(strs: &[&str]) -> (Vec<u8>, Vec<u32>) {
+        let mut buffer = Vec::new();
+        let mut offsets = Vec::new();
+
+        for s in strs {
+            offsets.push(buffer.len() as u32);
+            buffer.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(s.as_bytes());
+        }
+
+        offsets.push(buffer.len() as u32);
+
+        (buffer, offsets)
+    }
+
+    #[test]
+    fn test_copy_part() {
+        macro_rules! test_case {
+            ([$($s:expr),+], $start:expr, $n:expr => $buffer:expr) => {
+                let (buffer, offsets) = make_buffer_and_offsets(&[$($s),+]);
+
+                let mut output = Vec::new();
+                copy_part(&mut output, $start, $n, &offsets, &buffer);
+
+                assert_eq!(&output[..], $buffer);
+            };
+        }
+
+        test_case!(["abc", ""], 0, 1 => b"\x03\x00\x00\x00abc");
+        test_case!(["abc", ""], 0, 2 => b"\x03\x00\x00\x00abc\x00\x00\x00\x00");
+        test_case!(["abc", ""], 1, 1 => b"\x00\x00\x00\x00");
+        test_case!(["abc", "", "xyz"], 1, 2 => b"\x00\x00\x00\x00\x03\x00\x00\x00xyz");
+        test_case!(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", "xyz"], 0, 3 => b"\x00\x00\x00\x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00\x00\x00\x00\x03\x00\x00\x00xyz");
+    }
+
+    #[test]
+    fn test_copy_n_strings_to_binview_buffer() {
+        macro_rules! test_case {
+            ([$($s:expr),+], $start:expr, $n:expr => $buffer:expr, $views:expr) => {
+                let (buffer, offsets) = make_buffer_and_offsets(&[$($s),+]);
+
+                let mut views = Vec::new();
+                let mut output = Vec::new();
+                copy_n_strings_to_binview_buffer(&buffer, &mut output, &mut views, 0, &offsets, $start, $n);
+
+                assert_eq!(&output[..], $buffer);
+                assert_eq!(&views[..], $views);
+            };
+        }
+
+        test_case!(["abc", ""], 0, 1 => b"", &[View::new_inline(b"abc")]);
+        test_case!(["abc", ""], 0, 2 => b"", &[View::new_inline(b"abc"), View::new_inline(b"")]);
+        test_case!(["abc", ""], 1, 1 => b"", &[View::new_inline(b"")]);
+        test_case!(["abc", "", "xyz"], 1, 2 => b"", &[View::new_inline(b""), View::new_inline(b"xyz")]);
+        test_case!(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", "xyz"], 0, 3 => b"\x00\x00\x00\x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &[View::new_from_bytes(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 4), View::new_inline(b""), View::new_inline(b"xyz")]);
+        test_case!(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], 0, 1 => b"\x00\x00\x00\x00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &[View::new_from_bytes(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 4)]);
     }
 }

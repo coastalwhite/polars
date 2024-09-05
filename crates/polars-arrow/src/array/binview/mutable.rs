@@ -19,7 +19,6 @@ use crate::legacy::trusted_len::TrustedLenPush;
 use crate::trusted_len::TrustedLen;
 
 const DEFAULT_BLOCK_SIZE: usize = 8 * 1024;
-const MAX_EXP_BLOCK_SIZE: usize = 16 * 1024 * 1024;
 
 // Invariants:
 //
@@ -85,6 +84,8 @@ impl<T: ViewType + ?Sized> From<MutableBinaryViewArray<T>> for BinaryViewArrayGe
 }
 
 impl<T: ViewType + ?Sized> MutableBinaryViewArray<T> {
+    pub const MAX_EXP_BLOCK_SIZE: usize = 16 * 1024 * 1024;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -127,6 +128,22 @@ impl<T: ViewType + ?Sized> MutableBinaryViewArray<T> {
         }
 
         self.total_bytes_len = value;
+    }
+
+    /// Set the `total_buffer_len` of the [`MutableBinaryViewArray`]
+    ///
+    /// # Safety
+    ///
+    /// This should not break invariants of the [`MutableBinaryViewArray`]
+    #[inline]
+    pub unsafe fn set_total_buffer_len(&mut self, value: usize) {
+        #[cfg(debug_assertions)]
+        {
+            let actual_length = self.completed_buffers().iter().map(|b| b.len() as usize).sum::<usize>() + self.in_progress_buffer.len();
+            assert_eq!(value, actual_length);
+        }
+
+        self.total_buffer_len = value;
     }
 
     pub fn total_bytes_len(&self) -> usize {
@@ -281,7 +298,7 @@ impl<T: ViewType + ?Sized> MutableBinaryViewArray<T> {
             if does_not_fit_in_buffer || offset_will_not_fit {
                 // Allocate a new buffer and flush the old buffer
                 let new_capacity = (self.in_progress_buffer.capacity() * 2)
-                    .clamp(DEFAULT_BLOCK_SIZE, MAX_EXP_BLOCK_SIZE)
+                    .clamp(DEFAULT_BLOCK_SIZE, Self::MAX_EXP_BLOCK_SIZE)
                     .max(bytes.len());
                 let in_progress = Vec::with_capacity(new_capacity);
                 let flushed = std::mem::replace(&mut self.in_progress_buffer, in_progress);
@@ -299,6 +316,11 @@ impl<T: ViewType + ?Sized> MutableBinaryViewArray<T> {
         };
 
         self.views.push(view);
+    }
+
+    #[inline]
+    pub unsafe fn in_progress_buffer(&mut self) -> &mut Vec<u8> {
+        &mut self.in_progress_buffer
     }
 
     #[inline]
@@ -509,7 +531,7 @@ impl<T: ViewType + ?Sized> MutableBinaryViewArray<T> {
         Self::from_iterator(slice.as_ref().iter().map(|opt_v| opt_v.as_ref()))
     }
 
-    fn finish_in_progress(&mut self) -> bool {
+    pub fn finish_in_progress(&mut self) -> bool {
         if !self.in_progress_buffer.is_empty() {
             self.completed_buffers
                 .push(std::mem::take(&mut self.in_progress_buffer).into());

@@ -20,7 +20,7 @@ impl<'a, K: DictionaryKey, D: utils::DictDecodable> StateTranslation<'a, Diction
     type PlainDecoder = HybridRleDecoder<'a>;
 
     fn new(
-        _decoder: &DictionaryDecoder<K, D>,
+        _decoder: &mut DictionaryDecoder<K, D>,
         page: &'a DataPage,
         _dict: Option<&'a <DictionaryDecoder<K, D> as Decoder>::Dict>,
         _page_validity: Option<&PageValidity<'a>>,

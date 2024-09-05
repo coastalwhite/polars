@@ -28,7 +28,7 @@ pub(crate) trait StateTranslation<'a, D: Decoder>: Sized {
     type PlainDecoder;
 
     fn new(
-        decoder: &D,
+        decoder: &mut D,
         page: &'a DataPage,
         dict: Option<&'a D::Dict>,
         page_validity: Option<&PageValidity<'a>>,
@@ -50,7 +50,7 @@ pub(crate) trait StateTranslation<'a, D: Decoder>: Sized {
 }
 
 impl<'a, D: Decoder> State<'a, D> {
-    pub fn new(decoder: &D, page: &'a DataPage, dict: Option<&'a D::Dict>) -> ParquetResult<Self> {
+    pub fn new(decoder: &mut D, page: &'a DataPage, dict: Option<&'a D::Dict>) -> ParquetResult<Self> {
         let is_optional =
             page.descriptor.primitive_type.field_info.repetition == Repetition::Optional;
 
@@ -79,7 +79,7 @@ impl<'a, D: Decoder> State<'a, D> {
     }
 
     pub fn new_nested(
-        decoder: &D,
+        decoder: &mut D,
         page: &'a DataPage,
         dict: Option<&'a D::Dict>,
     ) -> ParquetResult<Self> {
@@ -731,7 +731,7 @@ impl<D: Decoder> PageDecoder<D> {
 
             let page = page.decompress(&mut self.iter)?;
 
-            let mut state = State::new(&self.decoder, &page, self.dict.as_ref())?;
+            let mut state = State::new(&mut self.decoder, &page, self.dict.as_ref())?;
 
             let start_length = target.len();
             state.extend_from_state(&mut self.decoder, &mut target, state_filter)?;

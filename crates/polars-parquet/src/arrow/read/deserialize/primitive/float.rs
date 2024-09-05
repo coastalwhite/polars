@@ -36,7 +36,7 @@ where
     type PlainDecoder = ArrayChunks<'a, P>;
 
     fn new(
-        _decoder: &FloatDecoder<P, T, D>,
+        _decoder: &mut FloatDecoder<P, T, D>,
         page: &'a DataPage,
         dict: Option<&'a <FloatDecoder<P, T, D> as utils::Decoder>::Dict>,
         _page_validity: Option<&PageValidity<'a>>,

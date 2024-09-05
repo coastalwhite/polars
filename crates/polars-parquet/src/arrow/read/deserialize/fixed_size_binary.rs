@@ -26,7 +26,7 @@ impl<'a> utils::StateTranslation<'a, BinaryDecoder> for StateTranslation<'a> {
     type PlainDecoder = &'a [u8];
 
     fn new(
-        decoder: &BinaryDecoder,
+        decoder: &mut BinaryDecoder,
         page: &'a DataPage,
         dict: Option<&'a <BinaryDecoder as Decoder>::Dict>,
         _page_validity: Option<&PageValidity<'a>>,

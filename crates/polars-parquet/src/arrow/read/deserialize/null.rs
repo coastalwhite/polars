@@ -27,7 +27,7 @@ impl<'a> utils::StateTranslation<'a, NullDecoder> for () {
     type PlainDecoder = ();
 
     fn new(
-        _decoder: &NullDecoder,
+        _decoder: &mut NullDecoder,
         _page: &'a DataPage,
         _dict: Option<&'a <NullDecoder as utils::Decoder>::Dict>,
         _page_validity: Option<&utils::PageValidity<'a>>,

@@ -22,7 +22,7 @@ impl<'a> utils::StateTranslation<'a, BooleanDecoder> for StateTranslation<'a> {
     type PlainDecoder = BitmapIter<'a>;
 
     fn new(
-        _decoder: &BooleanDecoder,
+        _decoder: &mut BooleanDecoder,
         page: &'a DataPage,
         _dict: Option<&'a <BooleanDecoder as Decoder>::Dict>,
         page_validity: Option<&PageValidity<'a>>,
