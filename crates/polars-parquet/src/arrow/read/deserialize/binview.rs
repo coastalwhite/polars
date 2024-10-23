@@ -1,4 +1,3 @@
-use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use arrow::array::{
@@ -16,7 +15,7 @@ use crate::parquet::encoding::delta_bitpacked::{lin_natural_sum, DeltaGatherer};
 use crate::parquet::encoding::{delta_byte_array, delta_length_byte_array, hybrid_rle, Encoding};
 use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::parquet::page::{split_buffer, DataPage, DictPage};
-use crate::read::deserialize::utils::{self, extend_from_decoder, Decoder};
+use crate::read::deserialize::utils::{self};
 use crate::read::PrimitiveLogicalType;
 
 type DecodedStateTuple = (MutableBinaryViewArray<[u8]>, MutableBitmap);
@@ -63,122 +62,6 @@ impl<'a> utils::StateTranslation<'a, BinViewDecoder> for StateTranslation<'a> {
             _ => Err(utils::not_implemented(page)),
         }
     }
-
-    fn len_when_not_nullable(&self) -> usize {
-        match self {
-            Self::Plain(v) => v.len_when_not_nullable(),
-            Self::Dictionary(v) => v.len(),
-            Self::DeltaLengthByteArray(v, _) => v.len(),
-            Self::DeltaBytes(v) => v.len(),
-        }
-    }
-
-    fn skip_in_place(&mut self, n: usize) -> ParquetResult<()> {
-        if n == 0 {
-            return Ok(());
-        }
-
-        match self {
-            Self::Plain(t) => _ = t.by_ref().nth(n - 1),
-            Self::Dictionary(t) => t.skip_in_place(n)?,
-            Self::DeltaLengthByteArray(t, _) => t.skip_in_place(n)?,
-            Self::DeltaBytes(t) => t.skip_in_place(n)?,
-        }
-
-        Ok(())
-    }
-
-    fn extend_from_state(
-        &mut self,
-        decoder: &mut BinViewDecoder,
-        decoded: &mut <BinViewDecoder as utils::Decoder>::DecodedState,
-        is_optional: bool,
-        page_validity: &mut Option<Bitmap>,
-        _dict: Option<&'a <BinViewDecoder as utils::Decoder>::Dict>,
-        additional: usize,
-    ) -> ParquetResult<()> {
-        let views_offset = decoded.0.views().len();
-        let buffer_offset = decoded.0.completed_buffers().len();
-
-        let mut validate_utf8 = decoder.check_utf8.load(Ordering::Relaxed);
-
-        match self {
-            Self::Plain(page_values) => {
-                decoder.decode_plain_encoded(
-                    decoded,
-                    page_values,
-                    is_optional,
-                    page_validity.as_mut(),
-                    additional,
-                )?;
-
-                // Already done in decode_plain_encoded
-                validate_utf8 = false;
-            },
-            Self::Dictionary(_) => unreachable!(),
-            Self::DeltaLengthByteArray(ref mut page_values, ref mut lengths) => {
-                let (values, validity) = decoded;
-
-                let mut collector = DeltaCollector {
-                    gatherer: &mut StatGatherer::default(),
-                    pushed_lengths: lengths,
-                    decoder: page_values,
-                };
-
-                match page_validity {
-                    None => {
-                        (&mut collector).push_n(values, additional)?;
-
-                        if is_optional {
-                            validity.extend_constant(additional, true);
-                        }
-                    },
-                    Some(page_validity) => extend_from_decoder(
-                        validity,
-                        page_validity,
-                        Some(additional),
-                        values,
-                        &mut collector,
-                    )?,
-                }
-
-                collector.flush(values);
-            },
-            Self::DeltaBytes(ref mut page_values) => {
-                let (values, validity) = decoded;
-
-                let mut collector = DeltaBytesCollector {
-                    decoder: page_values,
-                };
-
-                match page_validity {
-                    None => {
-                        collector.push_n(values, additional)?;
-
-                        if is_optional {
-                            validity.extend_constant(additional, true);
-                        }
-                    },
-                    Some(page_validity) => extend_from_decoder(
-                        validity,
-                        page_validity,
-                        Some(additional),
-                        values,
-                        collector,
-                    )?,
-                }
-            },
-        }
-
-        if validate_utf8 {
-            decoded
-                .0
-                .validate_utf8(buffer_offset, views_offset)
-                .map_err(|_| ParquetError::oos("Binary view contained invalid UTF-8"))?
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Default)]
@@ -215,10 +98,6 @@ pub(crate) struct DeltaCollector<'a, 'b> {
     pub(crate) pushed_lengths: &'b mut Vec<u32>,
 
     pub(crate) decoder: &'b mut delta_length_byte_array::Decoder<'a>,
-}
-
-pub(crate) struct DeltaBytesCollector<'a, 'b> {
-    pub(crate) decoder: &'b mut delta_byte_array::Decoder<'a>,
 }
 
 /// A [`DeltaGatherer`] that gathers the minimum, maximum and summation of the values as `usize`s.
@@ -351,10 +230,6 @@ impl DeltaGatherer for StatGatherer {
 }
 
 impl<'a, 'b> BatchableCollector<(), MutableBinaryViewArray<[u8]>> for &mut DeltaCollector<'a, 'b> {
-    fn reserve(target: &mut MutableBinaryViewArray<[u8]>, n: usize) {
-        target.reserve(n);
-    }
-
     fn push_n(
         &mut self,
         _target: &mut MutableBinaryViewArray<[u8]>,
@@ -413,97 +288,6 @@ impl<'a, 'b> DeltaCollector<'a, 'b> {
             self.pushed_lengths.clear();
             *self.gatherer = StatGatherer::default();
         }
-    }
-}
-
-impl<'a, 'b> BatchableCollector<(), MutableBinaryViewArray<[u8]>> for DeltaBytesCollector<'a, 'b> {
-    fn reserve(target: &mut MutableBinaryViewArray<[u8]>, n: usize) {
-        target.reserve(n);
-    }
-
-    fn push_n(&mut self, target: &mut MutableBinaryViewArray<[u8]>, n: usize) -> ParquetResult<()> {
-        struct MaybeUninitCollector(usize);
-
-        impl DeltaGatherer for MaybeUninitCollector {
-            type Target = [MaybeUninit<usize>; BATCH_SIZE];
-
-            fn target_len(&self, _target: &Self::Target) -> usize {
-                self.0
-            }
-
-            fn target_reserve(&self, _target: &mut Self::Target, _n: usize) {}
-
-            fn gather_one(&mut self, target: &mut Self::Target, v: i64) -> ParquetResult<()> {
-                target[self.0] = MaybeUninit::new(v as usize);
-                self.0 += 1;
-                Ok(())
-            }
-        }
-
-        let decoder_len = self.decoder.len();
-        let mut n = usize::min(n, decoder_len);
-
-        if n == 0 {
-            return Ok(());
-        }
-
-        let mut buffer = Vec::new();
-        target.reserve(n);
-
-        const BATCH_SIZE: usize = 4096;
-
-        let mut prefix_lengths = [const { MaybeUninit::<usize>::uninit() }; BATCH_SIZE];
-        let mut suffix_lengths = [const { MaybeUninit::<usize>::uninit() }; BATCH_SIZE];
-
-        while n > 0 {
-            let num_elems = usize::min(n, BATCH_SIZE);
-            n -= num_elems;
-
-            self.decoder.prefix_lengths.gather_n_into(
-                &mut prefix_lengths,
-                num_elems,
-                &mut MaybeUninitCollector(0),
-            )?;
-            self.decoder.suffix_lengths.gather_n_into(
-                &mut suffix_lengths,
-                num_elems,
-                &mut MaybeUninitCollector(0),
-            )?;
-
-            for i in 0..num_elems {
-                let prefix_length = unsafe { prefix_lengths[i].assume_init() };
-                let suffix_length = unsafe { suffix_lengths[i].assume_init() };
-
-                buffer.clear();
-
-                buffer.extend_from_slice(&self.decoder.last[..prefix_length]);
-                buffer.extend_from_slice(
-                    &self.decoder.values[self.decoder.offset..self.decoder.offset + suffix_length],
-                );
-
-                target.push_value(&buffer);
-
-                self.decoder.last.clear();
-                std::mem::swap(&mut self.decoder.last, &mut buffer);
-
-                self.decoder.offset += suffix_length;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn push_n_nulls(
-        &mut self,
-        target: &mut MutableBinaryViewArray<[u8]>,
-        n: usize,
-    ) -> ParquetResult<()> {
-        target.extend_constant(n, <Option<&[u8]>>::None);
-        Ok(())
-    }
-
-    fn skip_in_place(&mut self, n: usize) -> ParquetResult<()> {
-        self.decoder.skip_in_place(n)
     }
 }
 
@@ -887,17 +671,6 @@ impl utils::Decoder for BinViewDecoder {
         Ok((views, buffers))
     }
 
-    fn decode_plain_encoded<'a>(
-        &mut self,
-        _decoded: &mut Self::DecodedState,
-        _page_values: &mut <Self::Translation<'a> as utils::StateTranslation<'a, Self>>::PlainDecoder,
-        _is_optional: bool,
-        _page_validity: Option<&mut Bitmap>,
-        _limit: usize,
-    ) -> ParquetResult<()> {
-        unreachable!()
-    }
-
     fn extend_filtered_with_state(
         &mut self,
         mut state: utils::State<'_, Self>,
@@ -945,7 +718,15 @@ impl utils::Decoder for BinViewDecoder {
 
                 Ok(())
             },
-            _ => self.extend_filtered_with_state_default(state, decoded, filter),
+            StateTranslation::DeltaLengthByteArray(_decoder, _vec) => {
+                dbg!("TODO!");
+                todo!()
+            },
+            StateTranslation::DeltaBytes(_decoder) => {
+                dbg!("TODO!");
+                todo!()
+            },
+            // _ => self.extend_filtered_with_state_default(state, decoded, filter),
         }
     }
 
@@ -1028,11 +809,6 @@ impl<'a> BinaryIter<'a> {
             values,
             max_num_values,
         }
-    }
-
-    /// Return the length of the iterator when the data is not nullable.
-    pub fn len_when_not_nullable(&self) -> usize {
-        self.max_num_values
     }
 }
 
