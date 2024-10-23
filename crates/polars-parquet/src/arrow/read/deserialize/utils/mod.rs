@@ -219,7 +219,7 @@ pub(crate) fn unspecialized_decode<T: Default>(
     is_optional: bool,
 
     validity: &mut MutableBitmap,
-    target: &mut Vec<T>,
+    target: &mut impl Pushable<T>,
 ) -> ParquetResult<()> {
     match &filter {
         None => {},
