@@ -557,3 +557,41 @@ def test_many_files(tmp_path: Path, scan: Any, write: Any) -> None:
             }
         ),
     )
+
+
+
+df = pl.DataFrame({
+    'a': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+})
+df_large = pl.DataFrame({
+    'a': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] * 100,
+})
+
+f = io.BytesIO()
+df.write_parquet(f, row_group_size=1)
+
+os.environ['POLARS_JOIN_SAMPLE_LIMIT'] = '1'
+
+for i in range(1_000):
+    print(i)
+
+    left_fs = [io.BytesIO(f.getbuffer()) for _ in range(10)]
+    right_fs = [io.BytesIO(f.getbuffer()) for _ in range(10)]
+
+    left = pl.scan_parquet(left_fs)
+    right = pl.scan_parquet(right_fs)
+
+    left.join(df_large.lazy(), pl.col.a == pl.col.a).collect(engine='streaming')
+
+exit(0)
+df = pl.DataFrame({
+    'a': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+})
+
+f = io.BytesIO()
+df.write_parquet(f, row_group_size=1)
+
+os.environ['POLARS_MAX_THREADS'] = '2'
+left_fs = [io.BytesIO(f.getbuffer()) for _ in range(5)]
+left = pl.scan_parquet(left_fs)
+left.head(50).collect(engine='streaming', slice_pushdown=False)
