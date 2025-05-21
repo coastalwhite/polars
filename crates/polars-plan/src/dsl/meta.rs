@@ -13,15 +13,9 @@ pub struct MetaNameSpace(pub(crate) Expr);
 impl MetaNameSpace {
     /// Pop latest expression and return the input(s) of the popped expression.
     pub fn pop(self) -> PolarsResult<Vec<Expr>> {
-        let mut arena = Arena::with_capacity(8);
-        let node = to_aexpr(self.0, &mut arena)?;
-        let ae = arena.get(node);
         let mut inputs = Vec::with_capacity(2);
-        ae.inputs_rev(&mut inputs);
-        Ok(inputs
-            .iter()
-            .map(|node| node_to_expr(*node, &arena))
-            .collect())
+        self.0.inputs_rev(&mut inputs);
+        Ok(inputs)
     }
 
     /// Get the root column names.
@@ -31,6 +25,7 @@ impl MetaNameSpace {
 
     /// A projection that only takes a column or a column + alias.
     pub fn is_simple_projection(&self) -> bool {
+        self.0.is_simple_projection()
         let mut arena = Arena::with_capacity(8);
         to_aexpr(self.0.clone(), &mut arena)
             .map(|node| aexpr_is_simple_projection(node, &arena))
@@ -95,9 +90,9 @@ impl MetaNameSpace {
             Expr::Alias(_, _) => allow_aliasing,
             Expr::Cast {
                 expr,
-                dtype: DataType::Datetime(_, _),
+                dtype,
                 options: CastOptions::Strict,
-            } if matches!(&**expr, Expr::Literal(LiteralValue::Scalar(sc)) if matches!(sc.as_any_value(), AnyValue::Datetime(..))) => true,
+            } if matches!(dtype.as_ref(), DataTypeExpr::Literal(DataType::Datetime(_, _))) && matches!(&**expr, Expr::Literal(LiteralValue::Scalar(sc)) if matches!(sc.as_any_value(), AnyValue::Datetime(..))) => true,
             _ => false,
         })
     }
@@ -172,9 +167,9 @@ impl MetaNameSpace {
 
     /// Get a hold to an implementor of the `Display` trait that will format as
     /// the expression as a tree
-    pub fn into_tree_formatter(self, display_as_dot: bool) -> PolarsResult<impl Display> {
+    pub fn into_tree_formatter(self, display_as_dot: bool, schema: &Schema) -> PolarsResult<impl Display> {
         let mut arena = Default::default();
-        let node = to_aexpr(self.0, &mut arena)?;
+        let node = to_aexpr(self.0, &mut arena, schema)?;
         let mut visitor = TreeFmtVisitor::default();
         if display_as_dot {
             visitor.display = TreeFmtVisitorDisplay::DisplayDot;

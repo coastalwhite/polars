@@ -230,4 +230,22 @@ impl AExpr {
         self.to_field(schema, ctxt, arena)
             .map(|f| f.dtype().clone())
     }
+
+    /// Extract a constant usize from an expression.
+    pub fn extract_usize(&self, arena: &Arena<AExpr>) -> PolarsResult<usize> {
+        match self {
+            AExpr::Literal(n) => n.extract_usize(),
+            AExpr::Cast { expr, dtype, .. } => {
+                // lit(x, dtype=...) are Cast expressions. We verify the inner expression is literal.
+                if dtype.is_integer() {
+                    arena.get(*expr).extract_usize(arena)
+                } else {
+                    polars_bail!(InvalidOperation: "expression must be constant literal to extract integer")
+                }
+            },
+            _ => {
+                polars_bail!(InvalidOperation: "expression must be constant literal to extract integer")
+            },
+        }
+    }
 }
