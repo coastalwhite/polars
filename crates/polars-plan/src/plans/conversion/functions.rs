@@ -9,7 +9,7 @@ use crate::prelude::FunctionOptions;
 
 pub(super) fn convert_functions(
     input: Vec<Expr>,
-    function: FunctionExpr,
+    mut function: FunctionExpr,
     mut options: FunctionOptions,
     arena: &mut Arena<AExpr>,
     ctx: &mut ConversionContext,
@@ -53,7 +53,7 @@ pub(super) fn convert_functions(
     // Converts inputs
     let e = to_expr_irs(input, arena)?;
 
-    match function {
+    match &mut function {
         #[cfg(feature = "diff")]
         F::Diff(_) => {
             polars_ensure!(&e[1].is_scalar(arena), ComputeError: "'n' must be scalar value");
@@ -75,6 +75,16 @@ pub(super) fn convert_functions(
         F::ShiftAndFill => {
             polars_ensure!(&e[1].is_scalar(arena), ComputeError: "'n' must be scalar value");
             polars_ensure!(&e[2].is_scalar(arena), ComputeError: "'fill_value' must be scalar value");
+        },
+        #[cfg(feature = "range")]
+        F::Range(RangeFunction::LinearSpaces {
+            closed: _,
+            array_width,
+        }) => {
+            if array_width.is_some() {
+                assert_eq!(e.len(), 3);
+                *array_width = Some(arena.get(e[2].node()).extract_usize(arena)?);
+            }
         },
         _ => {},
     }

@@ -93,7 +93,7 @@ pub enum Expr {
     },
     Cast {
         expr: Arc<Expr>,
-        dtype: DataType,
+        dtype: Box<DataTypeExpr>,
         options: CastOptions,
     },
     Sort {
@@ -400,28 +400,10 @@ impl Expr {
         ctxt: Context,
         expr_arena: &mut Arena<AExpr>,
     ) -> PolarsResult<Field> {
-        let root = to_aexpr(self.clone(), expr_arena)?;
+        let root = to_aexpr(self.clone(), expr_arena, schema)?;
         expr_arena
             .get(root)
             .to_field_and_validate(schema, ctxt, expr_arena)
-    }
-
-    /// Extract a constant usize from an expression.
-    pub fn extract_usize(&self) -> PolarsResult<usize> {
-        match self {
-            Expr::Literal(n) => n.extract_usize(),
-            Expr::Cast { expr, dtype, .. } => {
-                // lit(x, dtype=...) are Cast expressions. We verify the inner expression is literal.
-                if dtype.is_integer() {
-                    expr.extract_usize()
-                } else {
-                    polars_bail!(InvalidOperation: "expression must be constant literal to extract integer")
-                }
-            },
-            _ => {
-                polars_bail!(InvalidOperation: "expression must be constant literal to extract integer")
-            },
-        }
     }
 
     #[inline]
@@ -474,6 +456,121 @@ impl Expr {
             input,
             function,
             options,
+        }
+    }
+
+    pub fn inputs_rev(&self, inputs: &'_ mut Vec<&Expr>) {
+        match self {
+            Expr::Column(_)
+            | Expr::Columns(_)
+            | Expr::DtypeColumn(_)
+            | Expr::IndexColumn(_)
+            | Expr::Literal(_)
+            | Expr::Wildcard
+            | Expr::Len
+            | Expr::Nth(_)
+            | Expr::Selector(_) => {},
+            Expr::BinaryExpr { left, op: _, right } => {
+                inputs.extend([left.as_ref(), right.as_ref()])
+            },
+            Expr::Cast {
+                expr,
+                dtype,
+                options: _,
+            } => {
+                inputs.push(expr.as_ref());
+                dtype.expr_inputs_rev(inputs);
+            },
+            Expr::Alias(expr, _)
+            | Expr::Sort { expr, options: _ }
+            | Expr::Explode {
+                input: expr,
+                skip_empty: _,
+            }
+            | Expr::KeepName(expr)
+            | Expr::Exclude(expr, _)
+            | Expr::RenameAlias { function: _, expr } => {
+                inputs.push(expr.as_ref());
+            },
+            Expr::Gather {
+                expr,
+                idx,
+                returns_scalar: _,
+            } => inputs.extend([expr.as_ref(), idx.as_ref()]),
+            Expr::SortBy {
+                expr,
+                by,
+                sort_options: _,
+            } => {
+                inputs.push(expr.as_ref());
+                inputs.extend(by.iter().map(|e| e));
+            },
+            Expr::Agg(agg_expr) => match agg_expr {
+                AggExpr::Min {
+                    input: expr,
+                    propagate_nans: _,
+                }
+                | AggExpr::Max {
+                    input: expr,
+                    propagate_nans: _,
+                }
+                | AggExpr::Median(expr)
+                | AggExpr::NUnique(expr)
+                | AggExpr::First(expr)
+                | AggExpr::Last(expr)
+                | AggExpr::Mean(expr)
+                | AggExpr::Implode(expr)
+                | AggExpr::Count(expr, _)
+                | AggExpr::Sum(expr)
+                | AggExpr::AggGroups(expr)
+                | AggExpr::Std(expr, _)
+                | AggExpr::Var(expr, _) => inputs.push(expr.as_ref()),
+                AggExpr::Quantile {
+                    expr,
+                    quantile,
+                    method,
+                } => {
+                    inputs.extend([expr.as_ref(), quantile.as_ref()]);
+                },
+            },
+            Expr::Ternary {
+                predicate,
+                truthy,
+                falsy,
+            } => inputs.extend([predicate.as_ref(), truthy.as_ref(), falsy.as_ref()]),
+            Expr::Function {
+                input,
+                function: _,
+                options: _,
+            }
+            | Expr::AnonymousFunction {
+                input,
+                function: _,
+                output_type: _,
+                options: _,
+            } => inputs.extend(input.iter().map(|e| e)),
+            Expr::Filter { input, by } => inputs.extend([input.as_ref(), by.as_ref()]),
+            Expr::Window {
+                function,
+                partition_by,
+                order_by,
+                options: _,
+            } => {
+                inputs.push(function.as_ref());
+                inputs.extend(partition_by.iter());
+                if let Some(order_by) = order_by {
+                    inputs.push(order_by.0.as_ref());
+                }
+            },
+            Expr::Slice {
+                input,
+                offset,
+                length,
+            } => {
+                inputs.extend([input.as_ref(), offset.as_ref(), length.as_ref()]);
+            },
+            Expr::Field(_) => {},
+            Expr::SubPlan(_, _) => {},
         }
     }
 }

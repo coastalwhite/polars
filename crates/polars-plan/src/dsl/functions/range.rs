@@ -115,22 +115,11 @@ pub fn linear_spaces(
     closed: ClosedInterval,
     as_array: bool,
 ) -> PolarsResult<Expr> {
-    let mut input = Vec::<Expr>::with_capacity(3);
-    input.push(start);
-    input.push(end);
-    let array_width = if as_array {
-        Some(num_samples.extract_usize().map_err(|_| {
-            polars_err!(InvalidOperation: "'as_array' is only valid when 'num_samples' is a constant integer")
-        })?)
-    } else {
-        input.push(num_samples);
-        None
-    };
-
+    let input = vec![start, end, num_samples];
     Ok(Expr::n_ary(
         RangeFunction::LinearSpaces {
             closed,
-            array_width,
+            array_width: as_array.then_some(0), // @NOTE: this is filled in the in dsl_to_ir step.
         },
         input,
     ))
