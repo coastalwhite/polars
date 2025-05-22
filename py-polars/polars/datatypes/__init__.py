@@ -1,4 +1,4 @@
-from polars.datatypes._parse import parse_into_dtype, try_parse_into_dtype
+from polars.datatypes._parse import parse_into_dtype, try_parse_into_dtype, parse_into_datatype_expr
 from polars.datatypes.classes import (
     Array,
     Binary,
@@ -108,6 +108,7 @@ __all__ = [
     "supported_numpy_char_code",
     "unpack_dtypes",
     # _parse
+    "parse_into_datatype_expr",
     "parse_into_dtype",
     "try_parse_into_dtype",
 ]

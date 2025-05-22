@@ -26,6 +26,9 @@ from polars.functions.as_datatype import datetime_ as datetime
 from polars.functions.as_datatype import time_ as time
 from polars.functions.business import business_day_count
 from polars.functions.col import col
+from polars.functions.datatype import (
+    datatype_of,
+)
 from polars.functions.eager import align_frames, concat
 from polars.functions.escape_regex import escape_regex
 from polars.functions.lazy import (
@@ -181,4 +184,6 @@ __all__ = [
     "sql_expr",
     # polars.functions.escape_regex
     "escape_regex",
+    # polars.functions.datatype
+    "datatype_of",
 ]

@@ -17,6 +17,8 @@ use crate::error::PyPolarsErr;
 use crate::map::lazy::map_single;
 use crate::utils::EnterPolarsExt;
 
+use super::PyDataTypeExpr;
+
 #[pymethods]
 impl PyExpr {
     fn __richcmp__(&self, other: Self, op: CompareOp) -> Self {
@@ -242,9 +244,7 @@ impl PyExpr {
     fn null_count(&self) -> Self {
         self.inner.clone().null_count().into()
     }
-    fn cast(&self, dtype: Wrap<DataType>, strict: bool, wrap_numerical: bool) -> Self {
-        let dt = dtype.0;
-
+    fn cast(&self, dtype: PyDataTypeExpr, strict: bool, wrap_numerical: bool) -> Self {
         let options = if wrap_numerical {
             CastOptions::Overflowing
         } else if strict {
@@ -253,7 +253,7 @@ impl PyExpr {
             CastOptions::NonStrict
         };
 
-        let expr = self.inner.clone().cast_with_options(dt, options);
+        let expr = self.inner.clone().cast_with_options(dtype.inner, options);
         expr.into()
     }
     fn sort_with(&self, descending: bool, nulls_last: bool) -> Self {
@@ -950,7 +950,7 @@ impl PyExpr {
     fn skip_batch_predicate(&self, py: Python<'_>, schema: Wrap<Schema>) -> PyResult<Option<Self>> {
         let mut aexpr_arena = Arena::new();
         py.enter_polars(|| {
-            let node = to_aexpr(self.inner.clone(), &mut aexpr_arena)?;
+            let node = to_aexpr(self.inner.clone(), &mut aexpr_arena, &schema.0)?;
             let Some(node) = aexpr_to_skip_batch_predicate(node, &mut aexpr_arena, &schema.0)
             else {
                 return Ok(None);

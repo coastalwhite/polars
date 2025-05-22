@@ -24,11 +24,13 @@ mod serde;
 mod string;
 #[cfg(feature = "pymethods")]
 mod r#struct;
+mod datatype;
 
 use std::mem::ManuallyDrop;
 
 use polars::lazy::dsl::Expr;
 use pyo3::pyclass;
+pub use datatype::*;
 
 #[pyclass]
 #[repr(transparent)]

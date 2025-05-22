@@ -192,11 +192,13 @@ impl NodeTraverser {
     /// as the total number of nodes in the arena.
     fn add_expressions(&mut self, expressions: Vec<PyExpr>) -> PyResult<(Vec<usize>, usize)> {
         let mut expr_arena = self.expr_arena.lock().unwrap();
+        let lp_arena = self.lp_arena.lock().unwrap();
+        let schema = lp_arena.get(self.root).schema(&lp_arena);
         Ok((
             expressions
                 .into_iter()
                 .map(|e| {
-                    to_aexpr(e.inner, &mut expr_arena)
+                    to_aexpr(e.inner, &mut expr_arena, &schema)
                         .map_err(PyPolarsErr::from)
                         .map(|v| v.0)
                 })
