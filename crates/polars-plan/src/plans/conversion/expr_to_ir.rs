@@ -7,11 +7,22 @@ pub fn to_expr_ir(expr: Expr, arena: &mut Arena<AExpr>, schema: &Schema) -> Pola
     Ok(ExprIR::new(node, state.output_name))
 }
 
-pub(super) fn to_expr_irs(input: Vec<Expr>, arena: &mut Arena<AExpr>, schema: &Schema) -> PolarsResult<Vec<ExprIR>> {
-    input.into_iter().map(|e| to_expr_ir(e, arena, schema)).collect()
+pub(super) fn to_expr_irs(
+    input: Vec<Expr>,
+    arena: &mut Arena<AExpr>,
+    schema: &Schema,
+) -> PolarsResult<Vec<ExprIR>> {
+    input
+        .into_iter()
+        .map(|e| to_expr_ir(e, arena, schema))
+        .collect()
 }
 
-pub fn to_expr_ir_ignore_alias(expr: Expr, arena: &mut Arena<AExpr>, schema: &Schema) -> PolarsResult<ExprIR> {
+pub fn to_expr_ir_ignore_alias(
+    expr: Expr,
+    arena: &mut Arena<AExpr>,
+    schema: &Schema,
+) -> PolarsResult<ExprIR> {
     let mut state = ConversionContext::new();
     state.ignore_alias = true;
     let node = to_aexpr_impl_materialized_lit(expr, arena, &mut state, schema)?;
@@ -319,7 +330,7 @@ pub(super) fn to_aexpr_impl(
             input,
             function,
             options,
-        } => return convert_functions(input, function, options, arena, state),
+        } => return convert_functions(input, function, options, arena, state, schema),
         Expr::Window {
             function,
             partition_by,

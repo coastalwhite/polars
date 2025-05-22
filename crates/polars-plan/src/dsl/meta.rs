@@ -15,7 +15,7 @@ impl MetaNameSpace {
     pub fn pop(self) -> PolarsResult<Vec<Expr>> {
         let mut inputs = Vec::with_capacity(2);
         self.0.inputs_rev(&mut inputs);
-        Ok(inputs)
+        Ok(inputs.into_iter().cloned().collect())
     }
 
     /// Get the root column names.
@@ -26,10 +26,6 @@ impl MetaNameSpace {
     /// A projection that only takes a column or a column + alias.
     pub fn is_simple_projection(&self) -> bool {
         self.0.is_simple_projection()
-        let mut arena = Arena::with_capacity(8);
-        to_aexpr(self.0.clone(), &mut arena)
-            .map(|node| aexpr_is_simple_projection(node, &arena))
-            .unwrap_or(false)
     }
 
     /// Get the output name of this expression.
@@ -167,16 +163,17 @@ impl MetaNameSpace {
 
     /// Get a hold to an implementor of the `Display` trait that will format as
     /// the expression as a tree
-    pub fn into_tree_formatter(self, display_as_dot: bool, schema: &Schema) -> PolarsResult<impl Display> {
-        let mut arena = Default::default();
-        let node = to_aexpr(self.0, &mut arena, schema)?;
-        let mut visitor = TreeFmtVisitor::default();
-        if display_as_dot {
-            visitor.display = TreeFmtVisitorDisplay::DisplayDot;
-        }
+    pub fn into_tree_formatter(self, display_as_dot: bool) -> PolarsResult<impl Display> {
+        // let mut arena = Default::default();
+        // let node = to_aexpr(self.0, &mut arena, schema)?;
+        // let mut visitor = TreeFmtVisitor::default();
+        // if display_as_dot {
+        //     visitor.display = TreeFmtVisitorDisplay::DisplayDot;
+        // }
+//
+        // AexprNode::new(node).visit(&mut visitor, &arena)?;
 
-        AexprNode::new(node).visit(&mut visitor, &arena)?;
-
-        Ok(visitor)
+        todo!();
+        Ok("hello")
     }
 }

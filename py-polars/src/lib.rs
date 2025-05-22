@@ -13,7 +13,7 @@ use polars_python::catalog::unity::PyCatalogClient;
 #[cfg(feature = "polars_cloud")]
 use polars_python::cloud;
 use polars_python::dataframe::PyDataFrame;
-use polars_python::expr::PyExpr;
+use polars_python::expr::{PyExpr, PyDataTypeExpr};
 use polars_python::functions::PyStringCacheHolder;
 #[cfg(not(target_arch = "wasm32"))]
 use polars_python::lazyframe::PyInProcessQuery;
@@ -95,6 +95,7 @@ fn polars(py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PyInProcessQuery>().unwrap();
     m.add_class::<PyLazyGroupBy>().unwrap();
     m.add_class::<PyExpr>().unwrap();
+    m.add_class::<PyDataTypeExpr>().unwrap();
     m.add_class::<PyPartitioning>().unwrap();
     m.add_class::<PyStringCacheHolder>().unwrap();
     #[cfg(feature = "csv")]

@@ -47,7 +47,7 @@ impl DataTypeExpr {
         into_datatype_impl(self, schema)
     }
 
-    pub fn expr_inputs_rev(&self, inputs: &'_ mut Vec<&Expr>) {
+    pub fn expr_inputs_rev<'a>(&'a self, inputs: &'_ mut Vec<&'a Expr>) {
         match self {
             Self::Literal(_) => {},
             Self::OfExpr(expr) => inputs.push(expr.as_ref()),
@@ -56,6 +56,13 @@ impl DataTypeExpr {
                     dtype.expr_inputs_rev(inputs);
                 }
             },
+        }
+    }
+
+    pub fn as_literal(&self) -> Option<&DataType> {
+        match self {
+            Self::Literal(dt) => Some(dt),
+            _ => None,
         }
     }
 }

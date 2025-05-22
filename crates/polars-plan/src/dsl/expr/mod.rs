@@ -455,7 +455,7 @@ impl Expr {
         }
     }
 
-    pub fn inputs_rev(&self, inputs: &'_ mut Vec<&Expr>) {
+    pub fn inputs_rev<'a>(&'a self, inputs: &'_ mut Vec<&'a Expr>) {
         match self {
             Expr::Column(_)
             | Expr::Columns(_)
@@ -568,6 +568,21 @@ impl Expr {
             Expr::Field(_) => {},
             Expr::SubPlan(_, _) => {},
         }
+    }
+
+    pub(crate) fn is_simple_projection(&self) -> bool {
+        let mut inputs = Vec::new();
+        inputs.push(self);
+        while let Some(input) = inputs.pop() {
+            match input {
+                Expr::Column(_) => {},
+                Expr::Alias(_, _) => {},
+                _ => return false,
+            }
+
+            input.inputs_rev(&mut inputs);
+        }
+        true
     }
 }
 

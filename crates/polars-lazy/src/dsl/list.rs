@@ -230,15 +230,17 @@ pub trait ListNameSpaceExtension: IntoListNameSpace + Sized {
     fn eval(self, expr: Expr, parallel: bool) -> Expr {
         let mut expr_arena = Arena::with_capacity(4);
 
-        let (pd_group, returns_scalar) = to_aexpr(expr.clone(), &mut expr_arena).map_or(
-            (ExprPushdownGroup::Barrier, true),
-            |node| {
-                let mut pd_group = ExprPushdownGroup::Pushable;
-                pd_group.update_with_expr_rec(expr_arena.get(node), &expr_arena, None);
+        dbg!();
+        let (pd_group, returns_scalar) =
+            to_aexpr(expr.clone(), &mut expr_arena, &Default::default()).map_or(
+                (ExprPushdownGroup::Barrier, true),
+                |node| {
+                    let mut pd_group = ExprPushdownGroup::Pushable;
+                    pd_group.update_with_expr_rec(expr_arena.get(node), &expr_arena, None);
 
-                (pd_group, is_scalar_ae(node, &expr_arena))
-            },
-        );
+                    (pd_group, is_scalar_ae(node, &expr_arena))
+                },
+            );
 
         let this = self.into_list_name_space();
 
@@ -247,10 +249,14 @@ pub trait ListNameSpaceExtension: IntoListNameSpace + Sized {
             for e in expr.into_iter() {
                 match e {
                     #[cfg(feature = "dtype-categorical")]
-                    Expr::Cast {
-                        dtype: DataType::Categorical(_, _) | DataType::Enum(_, _),
-                        ..
-                    } => {
+                    Expr::Cast { dtype, .. }
+                        if matches!(
+                            dtype.as_ref(),
+                            DataTypeExpr::Literal(
+                                DataType::Categorical(_, _) | DataType::Enum(_, _)
+                            )
+                        ) =>
+                    {
                         polars_bail!(
                             ComputeError: "casting to categorical not allowed in `list.eval`"
                         )
