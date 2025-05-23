@@ -170,8 +170,6 @@ impl MetaNameSpace {
             visitor.display = TreeFmtVisitorDisplay::DisplayDot;
         }
         self.0.visit(&mut visitor, &())?;
-
-        todo!();
-        Ok("hello")
+        Ok(visitor)
     }
 }
