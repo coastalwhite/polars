@@ -4,6 +4,7 @@ use std::ops::BitAnd;
 use super::*;
 use crate::plans::conversion::is_regex_projection;
 use crate::plans::ir::tree_format::TreeFmtVisitor;
+use crate::plans::tree_format::ExprTreeFmtVisitor;
 use crate::plans::visitor::{AexprNode, TreeWalker};
 use crate::prelude::tree_format::TreeFmtVisitorDisplay;
 
@@ -164,11 +165,11 @@ impl MetaNameSpace {
     /// Get a hold to an implementor of the `Display` trait that will format as
     /// the expression as a tree
     pub fn into_tree_formatter(self, display_as_dot: bool) -> PolarsResult<impl Display> {
-        let mut visitor = TreeFmtVisitor::default();
+        let mut visitor = ExprTreeFmtVisitor::default();
         if display_as_dot {
             visitor.display = TreeFmtVisitorDisplay::DisplayDot;
         }
-        AexprNode::new(node).visit(&mut visitor, &arena)?;
+        self.0.visit(&mut visitor, &())?;
 
         todo!();
         Ok("hello")

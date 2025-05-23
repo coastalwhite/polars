@@ -1095,7 +1095,7 @@ pub fn to_alp_impl(lp: DslPlan, ctxt: &mut DslConversionContext) -> PolarsResult
                         return Ok(input);
                     }
 
-                    let expr = to_expr_irs(expr, ctxt.expr_arena)?;
+                    let expr = to_expr_irs(expr, ctxt.expr_arena, &input_schema)?;
                     ctxt.conversion_optimizer
                         .fill_scratch(&expr, ctxt.expr_arena);
 

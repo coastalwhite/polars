@@ -11,6 +11,7 @@ use crate::plans::to_expr_ir;
 
 #[derive(Clone, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "dsl-schema", derive(schemars::JsonSchema))]
 pub enum DataTypeExpr {
     Literal(DataType),
     OfExpr(Box<Expr>),

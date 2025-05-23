@@ -299,6 +299,14 @@ impl<'a> TreeFmtNode<'a> {
         use IR::*;
         match self.content {
             #[cfg(feature = "regex")]
+            C::DslExpression(expr) => ND(
+                wh(
+                    h,
+                    &multiline_expression(&format!("{expr:?}")),
+                ),
+                vec![],
+            ),
+            #[cfg(feature = "regex")]
             C::Expression(expr) => ND(
                 wh(
                     h,
