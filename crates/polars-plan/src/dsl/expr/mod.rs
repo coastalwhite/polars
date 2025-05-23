@@ -503,7 +503,7 @@ impl Expr {
                 sort_options: _,
             } => {
                 inputs.push(expr.as_ref());
-                inputs.extend(by.iter().map(|e| e));
+                inputs.extend(by.iter());
             },
             Expr::Agg(agg_expr) => match agg_expr {
                 AggExpr::Min {
@@ -528,7 +528,7 @@ impl Expr {
                 AggExpr::Quantile {
                     expr,
                     quantile,
-                    method,
+                    method: _,
                 } => {
                     inputs.extend([expr.as_ref(), quantile.as_ref()]);
                 },
@@ -548,7 +548,7 @@ impl Expr {
                 function: _,
                 output_type: _,
                 options: _,
-            } => inputs.extend(input.iter().map(|e| e)),
+            } => inputs.extend(input.iter()),
             Expr::Filter { input, by } => inputs.extend([input.as_ref(), by.as_ref()]),
             Expr::Window {
                 function,

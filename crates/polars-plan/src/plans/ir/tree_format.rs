@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Deref;
 
 use polars_core::error::*;
 use polars_utils::{format_list_container_truncated, format_list_truncated};
@@ -104,10 +105,10 @@ impl fmt::Display for TreeFmtExpr<'_> {
                 input: _,
                 skip_empty: true,
             } => "explode(skip_empty)",
-            Expr::Alias(_, name) => return write!(f, "alias({})", name),
-            Expr::Column(name) => return write!(f, "col({})", name),
+            Expr::Alias(_, name) => return write!(f, "alias({name})"),
+            Expr::Column(name) => return write!(f, "col({name})"),
             Expr::Literal(lv) => return write!(f, "lit({lv:?})"),
-            Expr::BinaryExpr { op, .. } => return write!(f, "binary: {}", op),
+            Expr::BinaryExpr { op, .. } => return write!(f, "binary: {op}"),
             Expr::Cast { dtype, options, .. } => {
                 return if options.is_strict() {
                     write!(f, "strict cast({})", TreeFmtDataTypeExpr(dtype))
@@ -177,14 +178,9 @@ impl fmt::Display for TreeFmtExpr<'_> {
             Expr::Window { .. } => "window",
             Expr::Slice { .. } => "slice",
             Expr::Len => constants::LEN,
-            Expr::Columns(_) => {
-                return write!(f, "cols",);
-            },
-            Expr::DtypeColumn(_) => {
-                write!(f, "col_dtypes")?;
-                return Ok(());
-            },
-            Expr::IndexColumn(i) => "index_col",
+            Expr::Columns(cols) => return write!(f, "cols{:?}", cols.deref()),
+            Expr::DtypeColumn(dtypes) => return write!(f, "col_dtypes{:?}", dtypes.deref()),
+            Expr::IndexColumn(i) => return write!(f, "index_col{:?}", i.deref()),
             Expr::Wildcard => "all()",
             Expr::Exclude(_, _) => "exclude",
             Expr::KeepName(_) => "keep_name",
@@ -200,7 +196,6 @@ impl fmt::Display for TreeFmtExpr<'_> {
 }
 
 pub enum TreeFmtNodeContent<'a> {
-    DslExpression(&'a Expr),
     Expression(&'a ExprIR),
     LogicalPlan(Node),
 }
@@ -298,14 +293,6 @@ impl<'a> TreeFmtNode<'a> {
 
         use IR::*;
         match self.content {
-            #[cfg(feature = "regex")]
-            C::DslExpression(expr) => ND(
-                wh(
-                    h,
-                    &multiline_expression(&format!("{expr:?}")),
-                ),
-                vec![],
-            ),
             #[cfg(feature = "regex")]
             C::Expression(expr) => ND(
                 wh(
@@ -559,11 +546,7 @@ pub(crate) struct TreeFmtVisitor {
 
 #[derive(Default)]
 pub(crate) struct ExprTreeFmtVisitor {
-    levels: Vec<Vec<String>>,
-    prev_depth: usize,
-    depth: usize,
-    width: usize,
-    pub(crate) display: TreeFmtVisitorDisplay,
+    pub(crate) visitor: TreeFmtVisitor,
 }
 
 impl Visitor for TreeFmtVisitor {
@@ -625,28 +608,28 @@ impl Visitor for ExprTreeFmtVisitor {
     fn pre_visit(
         &mut self,
         node: &Self::Node,
-        arena: &Self::Arena,
+        _arena: &Self::Arena,
     ) -> PolarsResult<VisitRecursion> {
         let repr = TreeFmtExpr(node);
         let repr = repr.to_string();
 
-        if self.levels.len() <= self.depth {
-            self.levels.push(vec![])
+        if self.visitor.levels.len() <= self.visitor.depth {
+            self.visitor.levels.push(vec![])
         }
 
         // the post-visit ensures the width of this node is known
-        let row = self.levels.get_mut(self.depth).unwrap();
+        let row = self.visitor.levels.get_mut(self.visitor.depth).unwrap();
 
         // set default values to ensure we format at the right width
-        row.resize(self.width + 1, "".to_string());
-        row[self.width] = repr;
+        row.resize(self.visitor.width + 1, "".to_string());
+        row[self.visitor.width] = repr;
 
         // before entering a depth-first branch we preserve the depth to control the width increase
         // in the post-visit
-        self.prev_depth = self.depth;
+        self.visitor.prev_depth = self.visitor.depth;
 
         // we will enter depth first, we enter child so depth increases
-        self.depth += 1;
+        self.visitor.depth += 1;
 
         Ok(VisitRecursion::Continue)
     }
@@ -657,12 +640,16 @@ impl Visitor for ExprTreeFmtVisitor {
         _arena: &Self::Arena,
     ) -> PolarsResult<VisitRecursion> {
         // we finished this branch so we decrease in depth, back the caller node
-        self.depth -= 1;
+        self.visitor.depth -= 1;
 
         // because we traverse depth first
         // the width is increased once after one or more depth-first branches
         // this way we avoid empty columns in the resulting tree representation
-        self.width += if self.prev_depth == self.depth { 1 } else { 0 };
+        self.visitor.width += if self.visitor.prev_depth == self.visitor.depth {
+            1
+        } else {
+            0
+        };
 
         Ok(VisitRecursion::Continue)
     }
@@ -1144,6 +1131,12 @@ fn tree_fmt(tree: &TreeFmtVisitor, f: &mut fmt::Formatter<'_>) -> std::fmt::Resu
 impl fmt::Display for TreeFmtVisitor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         tree_fmt(self, f)
+    }
+}
+
+impl fmt::Display for ExprTreeFmtVisitor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        tree_fmt(&self.visitor, f)
     }
 }
 

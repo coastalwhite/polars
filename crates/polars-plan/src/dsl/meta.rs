@@ -3,9 +3,8 @@ use std::ops::BitAnd;
 
 use super::*;
 use crate::plans::conversion::is_regex_projection;
-use crate::plans::ir::tree_format::TreeFmtVisitor;
 use crate::plans::tree_format::ExprTreeFmtVisitor;
-use crate::plans::visitor::{AexprNode, TreeWalker};
+use crate::plans::visitor::TreeWalker;
 use crate::prelude::tree_format::TreeFmtVisitorDisplay;
 
 /// Specialized expressions for Categorical dtypes.
@@ -167,7 +166,7 @@ impl MetaNameSpace {
     pub fn into_tree_formatter(self, display_as_dot: bool) -> PolarsResult<impl Display> {
         let mut visitor = ExprTreeFmtVisitor::default();
         if display_as_dot {
-            visitor.display = TreeFmtVisitorDisplay::DisplayDot;
+            visitor.visitor.display = TreeFmtVisitorDisplay::DisplayDot;
         }
         self.0.visit(&mut visitor, &())?;
         Ok(visitor)
