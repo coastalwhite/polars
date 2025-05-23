@@ -45,6 +45,7 @@ from polars._utils.various import (
 from polars.datatypes import (
     Int64,
     is_polars_dtype,
+    parse_into_datatype_expr,
     parse_into_dtype,
 )
 from polars.dependencies import _check_for_numpy
@@ -94,7 +95,6 @@ if TYPE_CHECKING:
     from polars._utils.various import (
         NoDefault,
     )
-    from polars.datatype_expr import DataTypeExpr
 
     if sys.version_info >= (3, 11):
         from typing import Concatenate, ParamSpec
@@ -1795,7 +1795,7 @@ class Expr:
 
     def cast(
         self,
-        dtype: PolarsDataType | type[Any] | DataTypeExpr,
+        dtype: PolarsDataType | type[Any] | pl.DTypeExpr,
         *,
         strict: bool = True,
         wrap_numerical: bool = False,
@@ -1837,8 +1837,6 @@ class Expr:
         │ 3.0 ┆ 6   │
         └─────┴─────┘
         """
-        from polars.datatypes import parse_into_datatype_expr
-
         dtype = parse_into_datatype_expr(dtype)
         return self._from_pyexpr(
             self._pyexpr.cast(dtype._pydatatype_expr, strict, wrap_numerical)
