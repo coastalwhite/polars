@@ -10,7 +10,7 @@ from decimal import Decimal as PyDecimal
 from inspect import isclass
 from typing import TYPE_CHECKING, Any, ForwardRef, NoReturn, Union, get_args
 
-from polars import DataTypeExpr
+import polars._reexport as pl
 from polars.datatypes.classes import (
     Binary,
     Boolean,
@@ -43,15 +43,15 @@ else:  # pragma: no cover
     UnionType = UnionTypeOld
 
 
-def parse_into_datatype_expr(input: Any) -> DataTypeExpr:
+def parse_into_datatype_expr(input: Any) -> pl.DTypeExpr:
     """Parse an input into a DataTypeExpr."""
     from polars.polars import PyDataTypeExpr
 
-    if isinstance(input, DataTypeExpr):
+    if isinstance(input, pl.DTypeExpr):
         return input
     else:
         dtype = parse_into_dtype(input)
-        return DataTypeExpr._from_pydatatype_expr(PyDataTypeExpr.from_dtype(dtype))
+        return pl.DTypeExpr._from_pydatatype_expr(PyDataTypeExpr.from_dtype(dtype))
 
 
 def parse_into_dtype(input: Any) -> PolarsDataType:
