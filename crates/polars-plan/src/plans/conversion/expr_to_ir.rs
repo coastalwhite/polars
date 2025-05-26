@@ -1,27 +1,76 @@
 use super::*;
 use crate::plans::conversion::functions::convert_functions;
 
-pub fn to_expr_ir(expr: Expr, arena: &mut Arena<AExpr>) -> PolarsResult<ExprIR> {
-    let mut state = ConversionContext::new();
-    let node = to_aexpr_impl(expr, arena, &mut state)?;
-    Ok(ExprIR::new(node, state.output_name))
+pub enum ConversionOutput<T> {
+    Normal(T),
+    Selector(Vec<T>),
 }
 
-pub(super) fn to_expr_irs(input: Vec<Expr>, arena: &mut Arena<AExpr>) -> PolarsResult<Vec<ExprIR>> {
+impl<T> ConversionOutput<T> {
+    pub fn map<U>(self, f: impl Fn(T) -> U) -> ConversionOutput<U> {
+        match self {
+            Self::Normal(v) => ConversionOutput::Normal(f(v)),
+            Self::Selector(v) => ConversionOutput::Selector(v.into_iter().map(f).collect()),
+        }
+    }
+
+    pub fn try_map<U>(self, f: impl Fn(T) -> PolarsResult<U>) -> PolarsResult<ConversionOutput<U>> {
+        match self {
+            Self::Normal(v) => Ok(ConversionOutput::Normal(f(v)?)),
+            Self::Selector(v) => Ok(ConversionOutput::Selector(v.into_iter().map(f).collect()?)),
+        }
+    }
+
+    pub fn combine<U>(self, other: Self, f: impl Fn(T, T) -> U) -> ConversionOutput<U> {
+        Self::combine_vec(vec![self, other], |vs| f(vs[0], vs[1]))
+    }
+
+    pub fn combine_vec<U>(items: Vec<Self>, f: impl Fn(Vec<T>) -> U) -> ConversionOutput<U> {
+        todo!()
+    }
+}
+
+impl ConversionOutput<Node> {
+    pub fn into_expr_ir(self, output_name: OutputName) -> ConversionOutput<ExprIR> {
+        match self {
+            Self::Normal(v) => ConversionOutput::Normal(ExprIR::new(v, output_name)),
+            Self::Selector(items) => ConversionOutput::Selector(
+                items
+                    .into_iter()
+                    .map(|v| ExprIR::new(v, output_name.clone()))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+pub fn to_expr_ir(expr: Expr, arena: &mut Arena<AExpr>) -> PolarsResult<ConversionOutput<ExprIR>> {
+    let mut state = ConversionContext::new();
+    let node = to_aexpr_impl(expr, arena, &mut state)?;
+    Ok(node.into_expr_ir(state.output_name))
+}
+
+pub(super) fn to_expr_irs(
+    input: Vec<Expr>,
+    arena: &mut Arena<AExpr>,
+) -> PolarsResult<Vec<ConversionOutput<ExprIR>>> {
     input.into_iter().map(|e| to_expr_ir(e, arena)).collect()
 }
 
-pub fn to_expr_ir_ignore_alias(expr: Expr, arena: &mut Arena<AExpr>) -> PolarsResult<ExprIR> {
+pub fn to_expr_ir_ignore_alias(
+    expr: Expr,
+    arena: &mut Arena<AExpr>,
+) -> PolarsResult<ConversionOutput<ExprIR>> {
     let mut state = ConversionContext::new();
     state.ignore_alias = true;
     let node = to_aexpr_impl_materialized_lit(expr, arena, &mut state)?;
-    Ok(ExprIR::new(node, state.output_name))
+    Ok(node.into_expr_ir(state.output_name))
 }
 
 pub(super) fn to_expr_irs_ignore_alias(
     input: Vec<Expr>,
     arena: &mut Arena<AExpr>,
-) -> PolarsResult<Vec<ExprIR>> {
+) -> PolarsResult<Vec<ConversionOutput<ExprIR>>> {
     input
         .into_iter()
         .map(|e| to_expr_ir_ignore_alias(e, arena))
@@ -29,7 +78,7 @@ pub(super) fn to_expr_irs_ignore_alias(
 }
 
 /// converts expression to AExpr and adds it to the arena, which uses an arena (Vec) for allocation
-pub fn to_aexpr(expr: Expr, arena: &mut Arena<AExpr>) -> PolarsResult<Node> {
+pub fn to_aexpr(expr: Expr, arena: &mut Arena<AExpr>) -> PolarsResult<ConversionOutput<Node>> {
     to_aexpr_impl_materialized_lit(
         expr,
         arena,
@@ -62,7 +111,7 @@ fn to_aexprs(
     input: Vec<Expr>,
     arena: &mut Arena<AExpr>,
     state: &mut ConversionContext,
-) -> PolarsResult<Vec<Node>> {
+) -> PolarsResult<Vec<ConversionOutput<Node>>> {
     input
         .into_iter()
         .map(|e| to_aexpr_impl_materialized_lit(e, arena, state))
@@ -90,7 +139,7 @@ fn to_aexpr_impl_materialized_lit(
     expr: Expr,
     arena: &mut Arena<AExpr>,
     state: &mut ConversionContext,
-) -> PolarsResult<Node> {
+) -> PolarsResult<ConversionOutput<Node>> {
     // Already convert `Lit Float and Lit Int` expressions that are not used in a binary / function expression.
     // This means they can be materialized immediately
     let e = match expr {
@@ -112,13 +161,11 @@ pub(super) fn to_aexpr_impl(
     expr: Expr,
     arena: &mut Arena<AExpr>,
     state: &mut ConversionContext,
-) -> PolarsResult<Node> {
+) -> PolarsResult<ConversionOutput<Node>> {
     let owned = Arc::unwrap_or_clone;
-    let v = match expr {
-        Expr::Explode { input, skip_empty } => AExpr::Explode {
-            expr: to_aexpr_impl(owned(input), arena, state)?,
-            skip_empty,
-        },
+    Ok(match expr {
+        Expr::Explode { input, skip_empty } => to_aexpr_impl(owned(input), arena, state)?
+            .map(|expr| arena.add(AExpr::Explode { expr, skip_empty })),
         Expr::Alias(e, name) => {
             if state.prune_alias {
                 if state.output_name.is_none() && !state.ignore_alias {
@@ -127,131 +174,157 @@ pub(super) fn to_aexpr_impl(
                 let _ = to_aexpr_impl(owned(e), arena, state)?;
                 arena.pop().unwrap()
             } else {
-                AExpr::Alias(to_aexpr_impl(owned(e), arena, state)?, name)
+                to_aexpr_impl(owned(e), arena, state)?.map(|e| arena.add(AExpr::Alias(e, name)))
             }
         },
         Expr::Literal(lv) => {
             if state.output_name.is_none() {
                 state.output_name = OutputName::LiteralLhs(lv.output_column_name().clone());
             }
-            AExpr::Literal(lv)
+            ConversionOutput::Normal(arena.add(AExpr::Literal(lv)))
         },
         Expr::Column(name) => {
             if state.output_name.is_none() {
                 state.output_name = OutputName::ColumnLhs(name.clone())
             }
-            AExpr::Column(name)
+            ConversionOutput::Normal(arena.add(AExpr::Column(name)))
         },
         Expr::BinaryExpr { left, op, right } => {
             let l = to_aexpr_impl(owned(left), arena, state)?;
             let r = to_aexpr_impl(owned(right), arena, state)?;
-            AExpr::BinaryExpr {
-                left: l,
-                op,
-                right: r,
-            }
+
+            l.combine(r, |left, right| {
+                arena.add(AExpr::BinaryExpr { left, op, right })
+            })
         },
         Expr::Cast {
             expr,
             dtype,
             options,
-        } => AExpr::Cast {
-            expr: to_aexpr_impl(owned(expr), arena, state)?,
-            dtype,
-            options,
-        },
+        } => to_aexpr_impl(owned(expr), arena, state)?.map(|expr| {
+            arena.add(AExpr::Cast {
+                expr,
+                dtype,
+                options,
+            })
+        }),
         Expr::Gather {
             expr,
             idx,
             returns_scalar,
-        } => AExpr::Gather {
-            expr: to_aexpr_impl(owned(expr), arena, state)?,
-            idx: to_aexpr_impl_materialized_lit(owned(idx), arena, state)?,
-            returns_scalar,
+        } => {
+            let expr = to_aexpr_impl(owned(expr), arena, state)?;
+            let idx = to_aexpr_impl_materialized_lit(owned(idx), arena, state)?;
+
+            expr.combine(idx, |expr, idx| {
+                arena.add(AExpr::Gather {
+                    expr,
+                    idx,
+                    returns_scalar,
+                })
+            })
         },
-        Expr::Sort { expr, options } => AExpr::Sort {
-            expr: to_aexpr_impl(owned(expr), arena, state)?,
-            options,
-        },
+        Expr::Sort { expr, options } => to_aexpr_impl(owned(expr), arena, state)?
+            .map(|expr| arena.add(AExpr::Sort { expr, options })),
         Expr::SortBy {
             expr,
             by,
             sort_options,
-        } => AExpr::SortBy {
-            expr: to_aexpr_impl(owned(expr), arena, state)?,
-            by: by
+        } => {
+            let expr = to_aexpr_impl(owned(expr), arena, state)?;
+            let mut by = by
                 .into_iter()
                 .map(|e| to_aexpr_impl(e, arena, state))
-                .collect::<PolarsResult<_>>()?,
-            sort_options,
+                .collect::<PolarsResult<_>>()?;
+            by.push(expr);
+
+            ConversionOutput::combine_vec(by, |mut by| {
+                let expr = by.pop();
+                arena.add(AExpr::SortBy {
+                    expr,
+                    by,
+                    sort_options,
+                })
+            })
         },
-        Expr::Filter { input, by } => AExpr::Filter {
-            input: to_aexpr_impl(owned(input), arena, state)?,
-            by: to_aexpr_impl(owned(by), arena, state)?,
+        Expr::Filter { input, by } => {
+            let input = to_aexpr_impl(owned(input), arena, state)?;
+            let by = to_aexpr_impl(owned(by), arena, state)?;
+            input.combine(by, |input, by| arena.add(AExpr::Filter { input, by }))
         },
         Expr::Agg(agg) => {
             let a_agg = match agg {
                 AggExpr::Min {
                     input,
                     propagate_nans,
-                } => IRAggExpr::Min {
-                    input: to_aexpr_impl_materialized_lit(owned(input), arena, state)?,
-                    propagate_nans,
-                },
+                } => to_aexpr_impl_materialized_lit(owned(input), arena, state)?.map(|input| {
+                    IRAggExpr::Min {
+                        input,
+                        propagate_nans,
+                    }
+                }),
                 AggExpr::Max {
                     input,
                     propagate_nans,
-                } => IRAggExpr::Max {
-                    input: to_aexpr_impl_materialized_lit(owned(input), arena, state)?,
-                    propagate_nans,
-                },
-                AggExpr::Median(expr) => {
-                    IRAggExpr::Median(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
-                },
+                } => to_aexpr_impl_materialized_lit(owned(input), arena, state)?.map(|input| {
+                    IRAggExpr::Max {
+                        input,
+                        propagate_nans,
+                    }
+                }),
+                AggExpr::Median(expr) => to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                    .map(IRAggExpr::Median),
                 AggExpr::NUnique(expr) => {
-                    IRAggExpr::NUnique(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                        .map(IRAggExpr::NUnique)
                 },
                 AggExpr::First(expr) => {
-                    IRAggExpr::First(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?.map(IRAggExpr::First)
                 },
                 AggExpr::Last(expr) => {
-                    IRAggExpr::Last(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?.map(IRAggExpr::Last)
                 },
                 AggExpr::Mean(expr) => {
-                    IRAggExpr::Mean(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?.map(IRAggExpr::Mean)
                 },
                 AggExpr::Implode(expr) => {
-                    IRAggExpr::Implode(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                        .map(IRAggExpr::Implode)
                 },
-                AggExpr::Count(expr, include_nulls) => IRAggExpr::Count(
-                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?,
-                    include_nulls,
-                ),
+                AggExpr::Count(expr, include_nulls) => {
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                        .map(|input| IRAggExpr::Count(input, include_nulls))
+                },
                 AggExpr::Quantile {
                     expr,
                     quantile,
                     method,
-                } => IRAggExpr::Quantile {
-                    expr: to_aexpr_impl_materialized_lit(owned(expr), arena, state)?,
-                    quantile: to_aexpr_impl_materialized_lit(owned(quantile), arena, state)?,
-                    method,
+                } => {
+                    let expr = to_aexpr_impl_materialized_lit(owned(expr), arena, state)?;
+                    let quantile = to_aexpr_impl_materialized_lit(owned(quantile), arena, state)?;
+                    expr.combine(quantile, |expr, quantile| IRAggExpr::Quantile {
+                        expr,
+                        quantile,
+                        method,
+                    })
                 },
                 AggExpr::Sum(expr) => {
-                    IRAggExpr::Sum(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?.map(IRAggExpr::Sum)
                 },
-                AggExpr::Std(expr, ddof) => IRAggExpr::Std(
-                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?,
-                    ddof,
-                ),
-                AggExpr::Var(expr, ddof) => IRAggExpr::Var(
-                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?,
-                    ddof,
-                ),
+                AggExpr::Std(expr, ddof) => {
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                        .map(|expr| IRAggExpr::Std(expr, ddof))
+                },
+                AggExpr::Var(expr, ddof) => {
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                        .map(|expr| IRAggExpr::Var(expr, ddof))
+                },
                 AggExpr::AggGroups(expr) => {
-                    IRAggExpr::AggGroups(to_aexpr_impl_materialized_lit(owned(expr), arena, state)?)
+                    to_aexpr_impl_materialized_lit(owned(expr), arena, state)?
+                        .map(IRAggExpr::AggGroups)
                 },
             };
-            AExpr::Agg(a_agg)
+            a_agg.map(|v| arena.add(AExpr::Agg(v)))
         },
         Expr::Ternary {
             predicate,
@@ -262,11 +335,14 @@ pub(super) fn to_aexpr_impl(
             let t = to_aexpr_impl(owned(truthy), arena, state)?;
             let p = to_aexpr_impl_materialized_lit(owned(predicate), arena, state)?;
             let f = to_aexpr_impl(owned(falsy), arena, state)?;
-            AExpr::Ternary {
-                predicate: p,
-                truthy: t,
-                falsy: f,
-            }
+
+            ConversionOutput::combine_vec(vec![t, p, f], |vs| {
+                arena.add(AExpr::Ternary {
+                    predicate: vs[0],
+                    truthy: vs[1],
+                    falsy: vs[2],
+                })
+            })
         },
         Expr::AnonymousFunction {
             input,
@@ -275,13 +351,15 @@ pub(super) fn to_aexpr_impl(
             options,
         } => {
             let e = to_expr_irs(input, arena)?;
-            set_function_output_name(&e, state, || PlSmallStr::from_static(options.fmt_str));
-            AExpr::AnonymousFunction {
-                input: e,
-                function,
-                output_type,
-                options,
-            }
+            ConversionOutput::combine_vec(e, |e| {
+                set_function_output_name(&e, state, || PlSmallStr::from_static(options.fmt_str));
+                arena.add(AExpr::AnonymousFunction {
+                    input: e,
+                    function,
+                    output_type,
+                    options,
+                })
+            })
         },
         Expr::Function {
             input,
@@ -313,16 +391,24 @@ pub(super) fn to_aexpr_impl(
             input,
             offset,
             length,
-        } => AExpr::Slice {
-            input: to_aexpr_impl(owned(input), arena, state)?,
-            offset: to_aexpr_impl_materialized_lit(owned(offset), arena, state)?,
-            length: to_aexpr_impl_materialized_lit(owned(length), arena, state)?,
+        } => {
+            let input = to_aexpr_impl(owned(input), arena, state)?;
+            let offset = to_aexpr_impl_materialized_lit(owned(offset), arena, state)?;
+            let length = to_aexpr_impl_materialized_lit(owned(length), arena, state)?;
+
+            ConversionOutput::combine_vec(vec![input, offset, length], |vs| {
+                arena.add(AExpr::Slice {
+                    input: vs[0],
+                    offset: vs[1],
+                    length: vs[2],
+                })
+            })
         },
         Expr::Len => {
             if state.output_name.is_none() {
                 state.output_name = OutputName::LiteralLhs(get_len_name())
             }
-            AExpr::Len
+            ConversionOutput::Normal(arena.add(AExpr::Len))
         },
         #[cfg(feature = "dtype-struct")]
         e @ Expr::Field(_) => {
@@ -340,6 +426,5 @@ pub(super) fn to_aexpr_impl(
         | e @ Expr::Selector(_) => {
             polars_bail!(InvalidOperation: "'Expr: {}' not allowed in this context/location", e)
         },
-    };
-    Ok(arena.add(v))
+    })
 }
