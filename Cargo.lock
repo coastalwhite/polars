@@ -3352,6 +3352,7 @@ dependencies = [
  "polars-plan",
  "polars-stream",
  "polars-time",
+ "polars-tpg",
  "polars-utils",
  "pyo3",
  "rayon",
@@ -3490,6 +3491,7 @@ dependencies = [
  "polars-ops",
  "polars-parquet",
  "polars-time",
+ "polars-tpg",
  "polars-utils",
  "pyo3",
  "rayon",
@@ -3659,6 +3661,13 @@ dependencies = [
  "schemars",
  "serde",
  "strum_macros 0.27.1",
+]
+
+[[package]]
+name = "polars-tpg"
+version = "0.49.1"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]

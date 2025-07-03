@@ -124,6 +124,7 @@ polars-sql = { version = "0.50.0", path = "crates/polars-sql", default-features 
 polars-stream = { version = "0.50.0", path = "crates/polars-stream", default-features = false }
 polars-testing = { version = "0.50.0", path = "crates/polars-testing", default-features = false }
 polars-time = { version = "0.50.0", path = "crates/polars-time", default-features = false }
+polars-tpg = { version = "0.50.0", path = "crates/polars-tpg" }
 polars-utils = { version = "0.50.0", path = "crates/polars-utils", default-features = false }
 pyo3-polars = { version = "0.23.0", path = "pyo3-polars/pyo3-polars" }
 pyo3-polars-derive = { version = "0.17.0", path = "pyo3-polars/pyo3-polars-derive" }

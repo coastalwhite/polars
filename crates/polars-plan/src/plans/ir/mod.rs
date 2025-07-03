@@ -1,5 +1,6 @@
 mod dot;
 mod format;
+mod graph_display;
 mod inputs;
 mod schema;
 pub(crate) mod tree_format;
@@ -9,7 +10,9 @@ use std::fmt;
 
 pub use dot::{EscapeLabel, IRDotDisplay, PathsDisplay, ScanSourcesDisplay};
 pub use format::{ExprIRDisplay, IRDisplay, write_group_by, write_ir_non_recursive};
+pub use graph_display::to_tpg;
 use polars_core::prelude::*;
+use polars_tpg::TextPlanGraph;
 use polars_utils::idx_vec::UnitVec;
 use polars_utils::unique_id::UniqueId;
 #[cfg(feature = "ir_serde")]
@@ -195,6 +198,10 @@ impl IRPlan {
 
     pub fn display_dot(&self) -> dot::IRDotDisplay<'_> {
         self.as_ref().display_dot()
+    }
+
+    pub fn to_tpg(&self) -> TextPlanGraph {
+        to_tpg(&[self.lp_top], &self.lp_arena, &self.expr_arena)
     }
 }
 

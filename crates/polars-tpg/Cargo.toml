@@ -1,0 +1,15 @@
+[package]
+name = "polars-tpg"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+description = "Text Plan Graph for Polars"
+
+[dependencies]
+bitflags = { workspace = true }
+
+[lints]
+workspace = true

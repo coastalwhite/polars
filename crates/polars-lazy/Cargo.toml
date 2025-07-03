@@ -22,6 +22,7 @@ polars-ops = { workspace = true, features = ["chunked_ids"] }
 polars-plan = { workspace = true }
 polars-stream = { workspace = true, optional = true }
 polars-time = { workspace = true, optional = true }
+polars-tpg = { workspace = true }
 polars-utils = { workspace = true }
 
 bitflags = { workspace = true }

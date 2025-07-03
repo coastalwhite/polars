@@ -1,4 +1,5 @@
 use polars_core::prelude::*;
+use polars_tpg::dot::TpgDot;
 
 use crate::prelude::*;
 
@@ -11,7 +12,11 @@ impl LazyFrame {
             self.clone().to_alp()
         }?;
 
-        Ok(lp.display_dot().to_string())
+        let tpg = lp.to_tpg();
+        Ok(TpgDot {
+            plan: &tpg,
+        }
+        .to_string())
     }
 
     /// Get a dot language representation of the streaming physical plan.
