@@ -776,3 +776,42 @@ def test_empty_agg_22005() -> None:
         .select(pl.col("a").sum())
     )
     assert_frame_equal(out.collect(), pl.DataFrame({"a": 0}))
+
+
+@pytest.mark.parametrize("maintain_order", [False, True])
+def test_double_aggs(maintain_order: bool) -> None:
+    for e, expected in [
+        ("mean", [1.0, 4.0]),
+        ("max", [1, 4]),
+        ("min", [1, 4]),
+        ("sum", [1, 4]),
+        ("std", [None, None]),
+        ("var", [None, None]),
+        ("n_unique", [1, 1]),
+        ("last", [1, 4]),
+        ("first", [1, 4]),
+        ("median", [1, 4]),
+        ("skew", [float("nan"), float("nan")]),  # this one is comes from Apply
+    ]:
+        df = (
+            pl.DataFrame(
+                {
+                    "a": [1, 1, 1, 2, 2],
+                    "b": [1, 2, 3, 4, 5],
+                }
+            )
+            .group_by("a", maintain_order=maintain_order)
+            .agg([getattr(pl.col("b").min(), e)()])
+        )
+        expected = pl.DataFrame(
+            {
+                "a": [1, 2],
+                "b": expected,
+            },
+            schema_overrides={"b": df.schema["b"]},
+        )
+        assert_frame_equal(
+            df,
+            expected,
+            check_row_order=maintain_order,
+        )

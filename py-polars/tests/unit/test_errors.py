@@ -209,31 +209,37 @@ def test_err_bubbling_up_to_lit() -> None:
         df.filter(pl.col("date") == pl.Date("2020-01-01"))  # type: ignore[call-arg,operator]
 
 
-def test_error_on_double_agg() -> None:
-    for e in [
-        "mean",
-        "max",
-        "min",
-        "sum",
-        "std",
-        "var",
-        "n_unique",
-        "last",
-        "first",
-        "median",
-        "skew",  # this one is comes from Apply
+def test_error_on_double_agg(maintain_order: bool) -> None:
+    for e, expected in [
+        ("mean", [1.0, 4.0]),
+        ("max", [1, 4]),
+        ("min", [1, 4]),
+        ("sum", [1, 4]),
+        ("std", [0.0, 0.0]),
+        ("var", [0.0, 0.0]),
+        ("n_unique", [1, 1]),
+        ("last", [1, 4]),
+        ("first", [1, 4]),
+        ("median", [1, 4]),
+        ("skew", [0.0, 0.0]),  # this one is comes from Apply
     ]:
-        with pytest.raises(ComputeError, match="the column is already aggregated"):
-            (
-                pl.DataFrame(
-                    {
-                        "a": [1, 1, 1, 2, 2],
-                        "b": [1, 2, 3, 4, 5],
-                    }
-                )
-                .group_by("a")
-                .agg([getattr(pl.col("b").min(), e)()])
+        assert_frame_equal(
+            pl.DataFrame(
+                {
+                    "a": [1, 1, 1, 2, 2],
+                    "b": [1, 2, 3, 4, 5],
+                }
             )
+            .group_by("a", maintain_order=maintain_order)
+            .agg([getattr(pl.col("b").min(), e)()]),
+            pl.DataFrame(
+                {
+                    "a": [1, 2],
+                    "b": expected,
+                }
+            ),
+            check_row_order=maintain_order
+        )
 
 
 def test_filter_not_of_type_bool() -> None:

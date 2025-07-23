@@ -162,20 +162,14 @@ impl PhysicalExpr for AggregationExpr {
         state: &ExecutionState,
     ) -> PolarsResult<AggregationContext<'a>> {
         let mut ac = self.input.evaluate_on_groups(df, groups, state)?;
+
+        let was_aggregated_scalar = matches!(ac.agg_state(), AggState::AggregatedScalar(_));
+
         // don't change names by aggregations as is done in polars-core
         let keep_name = ac.get_values().name().clone();
 
         // Literals cannot be aggregated except for implode.
         polars_ensure!(!matches!(ac.agg_state(), AggState::LiteralScalar(_)), ComputeError: "cannot aggregate a literal");
-
-        if let AggregatedScalar(_) = ac.agg_state() {
-            match self.agg_type.groupby {
-                GroupByMethod::Implode => {},
-                _ => {
-                    polars_bail!(ComputeError: "cannot aggregate as {}, the column is already aggregated", self.agg_type.groupby);
-                },
-            }
-        }
 
         // SAFETY:
         // groups must always be in bounds.
@@ -356,12 +350,7 @@ impl PhysicalExpr for AggregationExpr {
                     let c = match ac.agg_state() {
                         // mean agg:
                         // -> f64 -> list<f64>
-                        AggregatedScalar(c) => c
-                            .reshape_list(&[
-                                ReshapeDimension::Infer,
-                                ReshapeDimension::new_dimension(1),
-                            ])
-                            .unwrap(),
+                        AggregatedScalar(c) => c.as_list().into_column(),
                         // Auto-imploded
                         AggState::NotAggregated(_) | AggState::AggregatedList(_) => {
                             ac._implode_no_agg();
@@ -436,10 +425,20 @@ impl PhysicalExpr for AggregationExpr {
             }
         };
 
-        Ok(AggregationContext::from_agg_state(
-            out,
-            Cow::Borrowed(groups),
-        ))
+        let groups = if was_aggregated_scalar {
+            // If we already had a aggregated scalar, the groups are all unit length and still
+            // positioned at the same place.
+            Cow::Borrowed(groups)
+        } else {
+            Cow::Owned(
+                GroupsType::Slice {
+                    groups: (0..groups.len() as IdxSize).map(|v| [v, 1]).collect(),
+                    rolling: false,
+                }
+                .into_sliceable(),
+            )
+        };
+        Ok(AggregationContext::from_agg_state(out, groups))
     }
 
     fn to_field(&self, input_schema: &Schema) -> PolarsResult<Field> {

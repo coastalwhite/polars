@@ -113,24 +113,13 @@ impl ApplyExpr {
         &self,
         mut ac: AggregationContext<'a>,
     ) -> PolarsResult<AggregationContext<'a>> {
-        let s = ac.get_values();
+        let ac_list = ac.aggregated_as_list();
+        let name = ac_list.name().clone();
 
-        #[allow(clippy::nonminimal_bool)]
-        {
-            polars_ensure!(
-                !(matches!(ac.agg_state(), AggState::AggregatedScalar(_)) && !s.dtype().is_list() ) ,
-                expr = self.expr,
-                ComputeError: "cannot aggregate, the column is already aggregated",
-            );
-        }
-
-        let name = s.name().clone();
-        let agg = ac.aggregated();
         // Collection of empty list leads to a null dtype. See: #3687.
-        if agg.is_empty() {
+        if ac_list.is_empty() {
             // Create input for the function to determine the output dtype, see #3946.
-            let agg = agg.list().unwrap();
-            let input_dtype = agg.inner_dtype();
+            let input_dtype = ac_list.inner_dtype();
             let input = Column::full_null(PlSmallStr::EMPTY, 0, input_dtype);
 
             let output = self.eval_and_flatten(&mut [input])?;
@@ -159,8 +148,7 @@ impl ApplyExpr {
                 None
             };
 
-            let lst = agg.list().unwrap();
-            let iter = lst.par_iter().map(f);
+            let iter = ac_list.par_iter().map(f);
 
             if let Some(dtype) = dtype {
                 // @NOTE: Since the output type for scalars does an implicit explode, we need to
@@ -179,8 +167,7 @@ impl ApplyExpr {
                 POOL.install(|| try_list_from_par_iter(iter, PlSmallStr::EMPTY))?
             }
         } else {
-            agg.list()
-                .unwrap()
+            ac_list
                 .into_iter()
                 .map(f)
                 .collect::<PolarsResult<_>>()?
