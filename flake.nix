@@ -34,10 +34,12 @@
               sha256 = "sha256-7BslJCnXhsJe97SDZiclW7tc83VH9NHp4fn+UTV1GYU=";
             };
 
-            rustPlatform = pkgs.makeRustPlatform {
-              cargo = rustToolchain;
-              rustc = rustToolchain;
-            };
+            rustPlatform = pkgs.fenix.combine [
+              pkgs.makeRustPlatform {
+                cargo = rustToolchain;
+                rustc = rustToolchain;
+              }
+            ];
 
             # Create a python platform that contains the python interpreter and its packages
             # in a single set that can be reused throughout this flake.
@@ -88,6 +90,18 @@
                 runtimePkgs =
                   with pkgs;
                   lib.optionals stdenv.isLinux [
+                    glib
+                    zlib
+                    libGL
+                    stdenv.cc.cc.lib
+                    xorg.libxcb
+                    xorg.xcbutilwm
+                    xorg.xcbutilimage
+                    xorg.xcbutil
+                    xorg.xcbutilkeysyms
+                    xorg.xcbutilrenderutil
+                    libsForQt5.wrapQtAppsHook
+                    libsForQt5.qtbase
                     gcc13
                     openssl_3_4
                   ];
@@ -305,6 +319,7 @@
 									"jupyterlab"
 
 									"pygithub"
+                  "pyqt5"
 
 									# Used for polars-benchmark
 									"pydantic-settings"
@@ -320,7 +335,6 @@
                   "rust-src"
                   "rustc"
                   "rustfmt"
-                  "rust-analyzer"
                 ];
               in
               {
@@ -354,6 +368,9 @@
 
                     openssl
                     pkg-config
+                    (python311Packages.matplotlib.override {
+                      enableQt = true;
+                    })
                   ]
                   ++ (mapAttrsToList (
                     name: value: pkgs.writeShellScriptBin "pl-${name}" (aliasToScript value)
@@ -416,6 +433,27 @@
                         "link-arg=${x}"
                       ]) rustLinkerFlags
                     );
+
+										qtlibs = pkgs.lib.makeLibraryPath [
+											pkgs.stdenv.cc.cc.lib
+											pkgs.zlib
+											pkgs.zstd
+											pkgs.libGL
+											pkgs.glib.out
+											pkgs.glib
+											pkgs.fontconfig
+											pkgs.xorg.libX11
+                      pkgs.xorg.libxcb
+                      pkgs.xorg.xcbutilwm
+                      pkgs.xorg.xcbutilimage
+                      pkgs.xorg.xcbutil
+                      pkgs.xorg.xcbutilkeysyms
+                      pkgs.xorg.xcbutilrenderutil
+											pkgs.libxkbcommon
+											pkgs.freetype
+											pkgs.dbus
+                      pkgs.wayland
+										];
                   in
                   ''
                     export WORKSPACE_ROOT=$(git rev-parse --show-toplevel)
@@ -438,12 +476,14 @@
                     export NIX_LD=${pkgs.stdenv.cc.bintools.dynamicLinker}
                     export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimePkgs}:$PYTHON_SHARED_LIB"
                     # Set openssl for `cargo test` to work.
-                    export LD_LIBRARY_PATH="${pkgs.openssl_3_4.out}/lib:${stdenv.cc.cc.lib}/lib:$PYTHON_SHARED_LIB"
+                    export LD_LIBRARY_PATH="${qtlibs}:${pkgs.cairo}/lib:${pkgs.openssl_3_4.out}/lib:${stdenv.cc.cc.lib}/lib:$PYTHON_SHARED_LIB"
 
                     export PYTHON_LIBS=$($VENV/bin/python -c "import site; print(site.getsitepackages()[0])")
 
                     export PYTHONPATH="$PYTHONPATH:$PYTHON_LIBS"
 										export RUST_SRC_PATH="${rustToolchain.rust-src}/lib/rustlib/src/rust/library"
+                    # export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt5.qtbase.bin}/lib/qt-${pkgs.qt5.qtbase.version}/plugins
+                    # export QT_QPA_PLATFORM=xcb 
                   '';
 
               }
