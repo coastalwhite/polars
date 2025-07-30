@@ -1,4 +1,5 @@
 mod datatype_fn;
+mod eager;
 mod expr_dyn_fn;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
