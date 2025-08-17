@@ -7,7 +7,6 @@ use polars_utils::arena::{Arena, Node};
 use polars_utils::pl_str::PlSmallStr;
 
 use super::IR;
-use crate::constants::UNLIMITED_CACHE;
 use crate::dsl::{FileScanIR, SinkTypeIR};
 use crate::plans::{AExpr, IRPlan};
 
@@ -93,19 +92,7 @@ pub fn to_tpg(root: &[Node], ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
                 schema: _,
                 options: _,
             } => C::new("hconcat"),
-            IR::Cache {
-                input: _,
-                id: _,
-                cache_hits,
-            } => C::new("cache").prop(
-                V::Default,
-                "hits",
-                if *cache_hits == UNLIMITED_CACHE {
-                    "∞".to_string()
-                } else {
-                    cache_hits.to_string()
-                },
-            ),
+            IR::Cache { input: _, id: _ } => C::new("cache"),
             IR::Filter {
                 predicate,
                 input: _,
@@ -192,7 +179,6 @@ pub fn to_tpg(root: &[Node], ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
                 scan_type,
                 unified_scan_args,
                 output_schema: _,
-                id: _,
             } => {
                 let total_columns =
                     file_info.schema.len() - usize::from(unified_scan_args.row_index.is_some());
@@ -287,8 +273,7 @@ pub fn to_tpg(root: &[Node], ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
                     .arg(V::Default, format!("{num_columns}/{total_columns}"))
                     .arg(
                         V::Default,
-                        TpgListBuilder::new()
-                            .items(columns.iter_names().map(|v| v.as_str())),
+                        TpgListBuilder::new().items(columns.iter_names().map(|v| v.as_str())),
                     )
             },
             #[cfg(feature = "merge_sorted")]
