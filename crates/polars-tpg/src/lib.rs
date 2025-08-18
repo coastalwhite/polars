@@ -1,4 +1,5 @@
 pub mod dot;
+pub mod html;
 
 #[derive(Clone, Copy)]
 pub struct TpgKey(pub usize);
