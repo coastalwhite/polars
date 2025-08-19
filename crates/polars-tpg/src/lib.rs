@@ -1,4 +1,5 @@
 pub mod dot;
+pub mod json;
 pub mod html;
 
 #[derive(Clone, Copy)]

@@ -1,6 +1,7 @@
 use polars_core::prelude::*;
 use polars_tpg::dot::TpgDot;
 use polars_tpg::html::TpgHtml;
+use polars_tpg::json::TpgJson;
 
 use crate::prelude::*;
 
@@ -14,7 +15,7 @@ impl LazyFrame {
         }?;
 
         let tpg = lp.to_tpg();
-        Ok(TpgHtml { plan: &tpg }.to_string())
+        Ok(TpgJson { plan: &tpg }.to_string())
     }
 
     /// Get a dot language representation of the streaming physical plan.
