@@ -59,21 +59,10 @@ pub fn to_tpg(root: &[Node], ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
 
     let mut inputs_scratch = Vec::with_capacity(4);
     while let Some((graph_key, node)) = stack.pop() {
-        dbg!(
-            IRPlan {
-                lp_top: node,
-                lp_arena: ir_arena.clone(),
-                expr_arena: expr_arena.clone()
-            }
-            .display()
-        );
-        dbg!(node);
-
         let ir = ir_arena.get(node);
 
         inputs_scratch.clear();
         ir.copy_inputs(&mut inputs_scratch);
-        dbg!(&inputs_scratch);
         let children: Vec<TpgKey> = inputs_scratch
             .iter()
             .copied()
@@ -162,14 +151,16 @@ pub fn to_tpg(root: &[Node], ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
                 content
             },
             IR::DataFrameScan {
+                df,
                 schema,
                 output_schema,
-                ..
             } => {
                 let num_columns = output_schema.as_ref().map_or(schema.len(), |p| p.len());
                 let total_columns = schema.len();
 
-                C::new("table").prop(V::Default, "π", format!("{num_columns}/{total_columns}"))
+                C::new("table")
+                    .prop(V::Default, "π", format!("{num_columns}/{total_columns}"))
+                    .prop(V::Debug, "height", df.height())
             },
             IR::Scan {
                 sources,

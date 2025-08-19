@@ -69,6 +69,18 @@ impl_value_from! {
     Binary: (&[u8], Box<[u8]>, Vec<u8>)
 }
 
+impl From<usize> for TpgValue {
+    fn from(v: usize) -> Self {
+        Self::Integer(v as i128)
+    }
+}
+
+impl From<isize> for TpgValue {
+    fn from(v: isize) -> Self {
+        Self::Integer(v as i128)
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct TpgListBuilder {
     values: Vec<TpgValue>,

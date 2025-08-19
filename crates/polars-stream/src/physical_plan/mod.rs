@@ -22,6 +22,7 @@ mod lower_expr;
 mod lower_group_by;
 mod lower_ir;
 mod to_graph;
+mod tpg;
 
 pub use fmt::visualize_plan;
 use polars_plan::prelude::FileType;
@@ -448,6 +449,81 @@ fn visit_node_inputs_mut(
                 }
             },
         }
+    }
+}
+
+fn visit_node_inputs(node: &PhysNode, inputs: &mut impl Extend<PhysNodeKey>) {
+    match phys_sm[node].kind {
+        PhysNodeKind::InMemorySource { .. }
+        | PhysNodeKind::MultiScan { .. }
+        | PhysNodeKind::InputIndependentSelect { .. } => {},
+        #[cfg(feature = "python")]
+        PhysNodeKind::PythonScan { .. } => {},
+        PhysNodeKind::Select { input, .. }
+        | PhysNodeKind::WithRowIndex { input, .. }
+        | PhysNodeKind::Reduce { input, .. }
+        | PhysNodeKind::StreamingSlice { input, .. }
+        | PhysNodeKind::NegativeSlice { input, .. }
+        | PhysNodeKind::Filter { input, .. }
+        | PhysNodeKind::SimpleProjection { input, .. }
+        | PhysNodeKind::InMemorySink { input }
+        | PhysNodeKind::FileSink { input, .. }
+        | PhysNodeKind::PartitionSink { input, .. }
+        | PhysNodeKind::InMemoryMap { input, .. }
+        | PhysNodeKind::Map { input, .. }
+        | PhysNodeKind::Sort { input, .. }
+        | PhysNodeKind::Multiplexer { input }
+        | PhysNodeKind::Rle(input)
+        | PhysNodeKind::RleId(input)
+        | PhysNodeKind::PeakMinMax { input, .. }
+        | PhysNodeKind::GroupBy { input, .. } => inputs.extend([input.node]),
+
+        #[cfg(feature = "cum_agg")]
+        PhysNodeKind::CumAgg { input, .. } => inputs.extend([input.node]),
+
+        PhysNodeKind::InMemoryJoin {
+            input_left,
+            input_right,
+            ..
+        }
+        | PhysNodeKind::EquiJoin {
+            input_left,
+            input_right,
+            ..
+        }
+        | PhysNodeKind::SemiAntiJoin {
+            input_left,
+            input_right,
+            ..
+        }
+        | PhysNodeKind::CrossJoin {
+            input_left,
+            input_right,
+            ..
+        } => inputs.extend([input_right.node, input_left.node]),
+
+        #[cfg(feature = "merge_sorted")]
+        PhysNodeKind::MergeSorted {
+            input_left,
+            input_right,
+            ..
+        } => inputs.extend([input_right.node, input_left.node]),
+
+        PhysNodeKind::TopK { input, k, .. } => inputs.extend([k.node, input.node]),
+
+        PhysNodeKind::DynamicSlice {
+            input,
+            offset,
+            length,
+        } => inputs.extend([length.node, offset.node, input.node]),
+
+        PhysNodeKind::Repeat { value, repeats } => inputs.extend([repeats.node, value.node]),
+
+        PhysNodeKind::OrderedUnion { inputs } | PhysNodeKind::Zip { inputs, .. } => {
+            inputs.extend(inputs.iter().rev().copied())
+        },
+
+        PhysNodeKind::SinkMultiple { sinks } => inputs.extend(sinks.iter().rev().copied()),
     }
 }
 
