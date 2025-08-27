@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::index::{IdxSize, NonZeroIdxSize};
 
@@ -225,6 +225,12 @@ impl<T> Deref for UnitVec<T> {
 
     fn deref(&self) -> &Self::Target {
         self.as_slice()
+    }
+}
+
+impl<T> DerefMut for UnitVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
     }
 }
 

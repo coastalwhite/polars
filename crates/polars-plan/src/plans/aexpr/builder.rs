@@ -1,13 +1,15 @@
 use polars_core::chunked_array::cast::CastOptions;
-use polars_core::prelude::{DataType, SortMultipleOptions, SortOptions};
+use polars_core::prelude::{DataType, IDX_DTYPE, SortMultipleOptions, SortOptions};
 use polars_core::scalar::Scalar;
 use polars_utils::IdxSize;
 use polars_utils::arena::{Arena, Node};
 use polars_utils::pl_str::PlSmallStr;
 
-use super::{AExpr, IRAggExpr, IRBooleanFunction, IRFunctionExpr, RowEncodingVariant};
-use crate::dsl::Operator;
-use crate::plans::{ExprIR, LiteralValue, OutputName};
+use super::{
+    AExpr, IRAggExpr, IRArrayFunction, IRBooleanFunction, IRFunctionExpr, RowEncodingVariant,
+};
+use crate::dsl::{Operator, RangeFunction};
+use crate::plans::{ExprIR, IRRangeFunction, LiteralValue, OutputName};
 
 #[derive(Clone, Copy)]
 pub struct AExprBuilder {
@@ -31,7 +33,7 @@ impl AExprBuilder {
         Self::new_from_aexpr(AExpr::Column(name.into()), arena)
     }
 
-    pub fn dataframe_length(self, arena: &mut Arena<AExpr>) -> Self {
+    pub fn dataframe_length(arena: &mut Arena<AExpr>) -> Self {
         Self::new_from_aexpr(AExpr::Len, arena)
     }
 
@@ -60,6 +62,14 @@ impl AExprBuilder {
         Self::function(
             vec![ExprIR::from_node(self.node(), arena)],
             IRFunctionExpr::RowEncode(vec![dtype], variant),
+            arena,
+        )
+    }
+
+    pub fn concat_arr(exprs: Vec<ExprIR>, arena: &mut Arena<AExpr>) -> Self {
+        AExprBuilder::function(
+            exprs,
+            IRFunctionExpr::ArrayExpr(IRArrayFunction::Concat),
             arena,
         )
     }
@@ -165,6 +175,14 @@ impl AExprBuilder {
             },
             arena,
         )
+    }
+
+    pub fn first(self, arena: &mut Arena<AExpr>) -> Self {
+        Self::agg(IRAggExpr::First(self.node()), arena)
+    }
+
+    pub fn last(self, arena: &mut Arena<AExpr>) -> Self {
+        Self::agg(IRAggExpr::Last(self.node()), arena)
     }
 
     pub fn explode_skip_empty(self, arena: &mut Arena<AExpr>) -> Self {
@@ -437,8 +455,26 @@ impl AExprBuilder {
         self.expr_ir(PlSmallStr::EMPTY)
     }
 
+    pub fn expr_ir_infer_name(self, arena: &Arena<AExpr>) -> ExprIR {
+        ExprIR::from_node(self.node(), arena)
+    }
+
     pub fn node(self) -> Node {
         self.node
+    }
+
+    pub fn row_index(arena: &mut Arena<AExpr>) -> Self {
+        Self::function(
+            vec![
+                Self::lit_scalar((0 as IdxSize).into(), arena).expr_ir_infer_name(arena),
+                Self::dataframe_length(arena).expr_ir_infer_name(arena),
+            ],
+            IRFunctionExpr::Range(IRRangeFunction::IntRange {
+                step: 1,
+                dtype: IDX_DTYPE,
+            }),
+            arena,
+        )
     }
 }
 

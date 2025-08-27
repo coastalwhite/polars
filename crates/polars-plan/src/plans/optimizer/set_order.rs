@@ -20,7 +20,7 @@ use polars_utils::idx_vec::UnitVec;
 use super::IR;
 use crate::dsl::{SinkTypeIR, UnionOptions};
 use crate::plans::ir::inputs::Inputs;
-use crate::plans::{AExpr, is_order_sensitive_amortized, is_scalar_ae};
+use crate::plans::{AExpr, FunctionIR, is_order_sensitive_amortized, is_scalar_ae};
 
 #[derive(Debug, Clone, Copy)]
 pub enum InputOrder {
@@ -32,6 +32,20 @@ pub enum InputOrder {
     Observing,
     /// The input observes and terminates ordering.
     Consuming,
+}
+
+impl InputOrder {
+    pub fn may_propagate(self) -> bool {
+        matches!(self, Self::Preserving | Self::Observing)
+    }
+
+    pub fn needs_ordered(self) -> bool {
+        matches!(self, Self::Observing | Self::Consuming)
+    }
+
+    pub fn is_unordered(self) -> bool {
+        matches!(self, Self::Unordered)
+    }
 }
 
 /// The ordering of the input and output ports of an IR node.
@@ -65,6 +79,10 @@ impl PortOrder {
 
     fn set_unordered_output(&mut self) {
         self.output_ordered.iter_mut().for_each(|o| *o = false);
+    }
+
+    pub fn propagates_order(&self) -> bool {
+        self.inputs.iter().any(|i| i.may_propagate()) && self.output_ordered.iter().any(|v| *v)
     }
 }
 
@@ -240,7 +258,7 @@ fn pushdown_orders(
                     };
                     NEO::new([I::Unordered, I::Unordered], [false])
                 } else {
-                    NEO::new([I::Observing, I::Observing], [true])
+                    NEO::new([I::Consuming, I::Consuming], [true])
                 }
             },
             #[cfg(feature = "asof_join")]
@@ -350,7 +368,22 @@ fn pushdown_orders(
                     if all_outputs_unordered {
                         I::Unordered
                     } else {
-                        I::Preserving
+                        let can_preserve = match function {
+                            FunctionIR::RowIndex { .. }
+                            | FunctionIR::Unnest { .. }
+                            | FunctionIR::Rechunk
+                            | FunctionIR::Explode { .. } => true,
+                            FunctionIR::OpaquePython(_)
+                            | FunctionIR::FastCount { .. }
+                            | FunctionIR::Unpivot { .. }
+                            | FunctionIR::Opaque { .. } => false,
+                        };
+
+                        if can_preserve {
+                            I::Preserving
+                        } else {
+                            I::Observing
+                        }
                     }
                 } else {
                     I::Consuming
@@ -441,7 +474,7 @@ fn pushdown_orders(
             },
 
             IR::HConcat { inputs, .. } => NEO::new(
-                std::iter::repeat_n(I::Observing, inputs.len()),
+                std::iter::repeat_n(I::Consuming, inputs.len()),
                 [!all_outputs_unordered],
             ),
 

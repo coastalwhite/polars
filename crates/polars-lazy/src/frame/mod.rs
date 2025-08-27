@@ -34,6 +34,7 @@ use polars_ops::frame::{JoinCoalesce, MaintainOrderJoin};
 #[cfg(feature = "is_between")]
 use polars_ops::prelude::ClosedInterval;
 pub use polars_plan::frame::{AllowedOptimizations, OptFlags};
+use polars_plan::plans::set_order::simplify_and_fetch_orderings;
 use polars_utils::pl_str::PlSmallStr;
 use polars_utils::plpath::PlPath;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -231,7 +232,19 @@ impl LazyFrame {
     ///
     /// Returns `Err` if optimizing the logical plan fails.
     pub fn describe_optimized_plan(&self) -> PolarsResult<String> {
-        Ok(self.clone().to_alp_optimized()?.describe())
+        let mut alp_plan = self.clone().sink(SinkType::Memory)?.to_alp_optimized()?;
+        let mut orders = simplify_and_fetch_orderings(
+            &[alp_plan.lp_top],
+            &mut alp_plan.lp_arena,
+            &mut alp_plan.expr_arena,
+        );
+        remove_ordering_requirements(
+            &[alp_plan.lp_top],
+            &mut alp_plan.lp_arena,
+            &mut alp_plan.expr_arena,
+            &mut orders,
+        );
+        Ok(alp_plan.describe())
     }
 
     /// Return a String describing the optimized logical plan in tree format.
@@ -685,6 +698,18 @@ impl LazyFrame {
             _ => {},
         }
         let mut alp_plan = self.clone().to_alp_optimized()?;
+
+        let mut orders = simplify_and_fetch_orderings(
+            &[alp_plan.lp_top],
+            &mut alp_plan.lp_arena,
+            &mut alp_plan.expr_arena,
+        );
+        remove_ordering_requirements(
+            &[alp_plan.lp_top],
+            &mut alp_plan.lp_arena,
+            &mut alp_plan.expr_arena,
+            &mut orders,
+        );
 
         match engine {
             Engine::Auto | Engine::Streaming => feature_gated!("new_streaming", {
