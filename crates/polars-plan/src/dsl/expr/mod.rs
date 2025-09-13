@@ -539,6 +539,8 @@ impl Expr {
 pub enum EvalVariant {
     /// `list.eval`
     List,
+    /// `list.agg`
+    ListAgg,
 
     /// `array.eval`
     Array {
@@ -546,6 +548,8 @@ pub enum EvalVariant {
         /// be `List`.
         as_list: bool,
     },
+    ///  `array.agg`
+    ArrayAgg,
 
     /// `cumulative_eval`
     Cumulative { min_samples: usize },
@@ -555,7 +559,9 @@ impl EvalVariant {
     pub fn to_name(&self) -> &'static str {
         match self {
             Self::List => "list.eval",
+            Self::ListAgg => "list.agg",
             Self::Array { .. } => "array.eval",
+            Self::ArrayAgg => "array.agg",
             Self::Cumulative { min_samples: _ } => "cumulative_eval",
         }
     }
@@ -563,8 +569,8 @@ impl EvalVariant {
     /// Get the `DataType` of the `pl.element()` value.
     pub fn element_dtype<'a>(&self, dtype: &'a DataType) -> PolarsResult<&'a DataType> {
         match (self, dtype) {
-            (Self::List, DataType::List(inner)) => Ok(inner.as_ref()),
-            (Self::Array { .. }, DataType::Array(inner, _)) => Ok(inner.as_ref()),
+            (Self::List { .. } | Self::ListAgg, DataType::List(inner)) => Ok(inner.as_ref()),
+            (Self::Array { .. } | Self::ArrayAgg, DataType::Array(inner, _)) => Ok(inner.as_ref()),
             (Self::Cumulative { min_samples: _ }, dt) => Ok(dt),
             _ => polars_bail!(op = self.to_name(), dtype),
         }
@@ -575,39 +581,48 @@ impl EvalVariant {
         &self,
         dtype: &'_ DataType,
         output_element_dtype: DataType,
+        is_scalar: bool,
     ) -> PolarsResult<DataType> {
         match (self, dtype) {
-            (Self::List, DataType::List(_)) => Ok(DataType::List(Box::new(output_element_dtype))),
+            (Self::ListAgg, DataType::List(_)) if is_scalar => Ok(output_element_dtype),
+            (Self::ArrayAgg, DataType::Array(_, _)) if is_scalar => Ok(output_element_dtype),
+
+            (Self::List | Self::ListAgg, DataType::List(_)) => {
+                Ok(DataType::List(Box::new(output_element_dtype)))
+            },
+
             (Self::Array { as_list: false }, DataType::Array(_, width)) => {
                 Ok(DataType::Array(Box::new(output_element_dtype), *width))
             },
-            (Self::Array { as_list: true }, DataType::Array(_, _)) => {
+            (Self::Array { as_list: true } | Self::ArrayAgg, DataType::Array(_, _)) => {
                 Ok(DataType::List(Box::new(output_element_dtype)))
             },
+
             (Self::Cumulative { min_samples: _ }, _) => Ok(output_element_dtype),
+
             _ => polars_bail!(op = self.to_name(), dtype),
         }
     }
 
     pub fn is_elementwise(&self) -> bool {
-        match self {
-            EvalVariant::List => true,
-            EvalVariant::Array { .. } => true,
-            EvalVariant::Cumulative { min_samples: _ } => false,
-        }
+        self.is_length_preserving() && self.is_row_separable()
     }
 
     pub fn is_row_separable(&self) -> bool {
         match self {
-            EvalVariant::List => true,
-            EvalVariant::Array { .. } => true,
-            EvalVariant::Cumulative { min_samples: _ } => false,
+            Self::List | Self::ListAgg => true,
+            Self::Array { .. } | Self::ArrayAgg => true,
+            Self::Cumulative { min_samples: _ } => false,
         }
     }
 
     pub fn is_length_preserving(&self) -> bool {
         match self {
-            EvalVariant::List | EvalVariant::Array { .. } | EvalVariant::Cumulative { .. } => true,
+            Self::List
+            | Self::ListAgg
+            | Self::Array { .. }
+            | Self::ArrayAgg
+            | Self::Cumulative { .. } => true,
         }
     }
 }

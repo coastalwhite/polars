@@ -434,7 +434,7 @@ pub(super) fn to_aexpr_impl(
             let (evaluation, _) = to_aexpr_impl(owned(evaluation), &mut evaluation_ctx)?;
 
             match variant {
-                EvalVariant::List => {},
+                EvalVariant::List | EvalVariant::ListAgg | EvalVariant::ArrayAgg => {},
                 EvalVariant::Array { as_list } => {
                     polars_ensure!(
                         as_list || is_length_preserving_ae(evaluation, ctx.arena),

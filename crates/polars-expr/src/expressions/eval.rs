@@ -265,6 +265,7 @@ impl EvalExpr {
         &self,
         lst: &ListChunked,
         state: &ExecutionState,
+        is_agg: bool,
     ) -> PolarsResult<Column> {
         let fits_idx_size = lst.get_inner().len() < (IdxSize::MAX as usize);
         if match self.pd_group {
@@ -287,7 +288,11 @@ impl EvalExpr {
         ca: &ArrayChunked,
         state: &ExecutionState,
         as_list: bool,
+        is_agg: bool,
     ) -> PolarsResult<Column> {
+        use polars_core::prelude::BooleanChunked;
+        use polars_utils::itertools::Itertools;
+
         let df = ca.get_inner().with_name(PlSmallStr::EMPTY).into_frame();
 
         // Fast path: Empty or only nulls.
@@ -295,7 +300,9 @@ impl EvalExpr {
             let name = self.output_field_with_ctx.name.clone();
             let dtype = self.non_aggregated_output_dtype.inner_dtype().unwrap();
 
-            return Ok(if as_list {
+            return Ok(if is_agg {
+                Column::full_null(name, ca.len(), dtype)
+            } else if as_list {
                 ListChunked::full_null_with_dtype(name, ca.len(), dtype).into_column()
             } else {
                 ArrayChunked::full_null_with_dtype(name, ca.len(), dtype, ca.width()).into_column()
@@ -316,7 +323,7 @@ impl EvalExpr {
                 ca.len(),
             );
 
-            return Ok(if as_list {
+            return Ok(if is_agg || as_list {
                 out.to_list().into_column()
             } else {
                 out.clone().into_column()
@@ -361,8 +368,6 @@ impl EvalExpr {
                         (*start == j as IdxSize * ca_width) & (*len == ca_width)
                     })
             } else {
-                use polars_utils::itertools::Itertools;
-
                 output_groups
                     .iter()
                     .enumerate_idx()
@@ -372,6 +377,20 @@ impl EvalExpr {
             if groups_are_unchanged {
                 let values = ac.flat_naive();
                 let dtype = values.dtype().clone();
+
+                if is_agg && self.evaluation_is_scalar {
+                    let mut values = values.into_owned();
+                    if let Some(validity) = validity {
+                        values = Column::full_null(PlSmallStr::EMPTY, 1, values.dtype())
+                            .zip_with_same_type(
+                                &BooleanChunked::from_bitmap(PlSmallStr::EMPTY, validity),
+                                &values,
+                            )?;
+                    }
+                    values.rename(self.output_field_with_ctx.name.clone());
+                    return Ok(values);
+                }
+
                 let mut out = ArrayChunked::from_aligned_values(
                     self.output_field_with_ctx.name.clone(),
                     &dtype,
@@ -390,6 +409,41 @@ impl EvalExpr {
                     out.into_column()
                 });
             }
+        }
+
+        if is_agg && self.evaluation_is_scalar {
+            let out = match ac.agg_state() {
+                AggState::AggregatedScalar(v) => {
+                    let mut v = v.clone();
+                    if let Some(validity) = validity {
+                        let mut i = 0 as IdxSize;
+                        let gather_idxs = validity
+                            .iter()
+                            .map(|v| {
+                                let value = i;
+                                i += IdxSize::from(v);
+                                value
+                            })
+                            .collect::<Vec<IdxSize>>();
+
+                        let mut vv = unsafe { v.take_slice_unchecked(&gather_idxs) };
+                        vv = Column::full_null(PlSmallStr::EMPTY, 1, vv.dtype())
+                            .zip_with_same_type(
+                                &BooleanChunked::from_bitmap(PlSmallStr::EMPTY, validity),
+                                &vv,
+                            )?;
+                        v = vv;
+                    }
+                    v
+                },
+                AggState::LiteralScalar(v) => {
+                    assert_eq!(v.len(), 1);
+                    return Ok(v.new_from_index(0, ca.len()));
+                },
+                AggState::NotAggregated(_) | AggState::AggregatedList(_) => unreachable!(),
+            };
+
+            return Ok(out);
         }
 
         // Slow path. Groups have changed, so we need to gather data again.
@@ -414,7 +468,7 @@ impl EvalExpr {
             ca = Cow::Owned(cca);
         }
 
-        Ok(if as_list {
+        Ok(if is_agg || as_list {
             ca.into_owned().into_column()
         } else {
             ca.cast(&self.non_aggregated_output_dtype)
@@ -498,13 +552,24 @@ impl PhysicalExpr for EvalExpr {
     fn evaluate(&self, df: &DataFrame, state: &ExecutionState) -> PolarsResult<Column> {
         let input = self.input.evaluate(df, state)?;
         match self.variant {
-            EvalVariant::List => {
+            EvalVariant::List | EvalVariant::ListAgg => {
                 let lst = input.list()?;
-                self.evaluate_on_list_chunked(lst, state)
+                self.evaluate_on_list_chunked(
+                    lst,
+                    state,
+                    matches!(self.variant, EvalVariant::ListAgg),
+                )
             },
-            EvalVariant::Array { as_list } => feature_gated!("dtype-array", {
-                self.evaluate_on_array_chunked(input.array()?, state, as_list)
-            }),
+            EvalVariant::Array { as_list } => {
+                feature_gated!("dtype-array", {
+                    self.evaluate_on_array_chunked(input.array()?, state, as_list, false)
+                })
+            },
+            EvalVariant::ArrayAgg => {
+                feature_gated!("dtype-array", {
+                    self.evaluate_on_array_chunked(input.array()?, state, true, true)
+                })
+            },
             EvalVariant::Cumulative { min_samples } => self
                 .evaluate_cumulative_eval(input.as_materialized_series(), min_samples, state)
                 .map(Column::from),
@@ -519,15 +584,36 @@ impl PhysicalExpr for EvalExpr {
     ) -> PolarsResult<AggregationContext<'a>> {
         let mut input = self.input.evaluate_on_groups(df, groups, state)?;
         match self.variant {
-            EvalVariant::List => {
-                let out = self.evaluate_on_list_chunked(input.get_values().list()?, state)?;
+            EvalVariant::List | EvalVariant::ListAgg => {
+                let out = self.evaluate_on_list_chunked(
+                    input.get_values().list()?,
+                    state,
+                    matches!(self.variant, EvalVariant::ArrayAgg),
+                )?;
                 input.with_values(out, false, Some(&self.expr))?;
             },
-            EvalVariant::Array { as_list } => feature_gated!("dtype-array", {
-                let out =
-                    self.evaluate_on_array_chunked(input.aggregated().array()?, state, as_list)?;
-                input.with_values(out, true, Some(&self.expr))?;
-            }),
+            EvalVariant::Array { as_list } => {
+                feature_gated!("dtype-array", {
+                    let out = self.evaluate_on_array_chunked(
+                        input.aggregated().array()?,
+                        state,
+                        as_list,
+                        false,
+                    )?;
+                    input.with_values(out, true, Some(&self.expr))?;
+                })
+            },
+            EvalVariant::ArrayAgg => {
+                feature_gated!("dtype-array", {
+                    let out = self.evaluate_on_array_chunked(
+                        input.aggregated().array()?,
+                        state,
+                        true,
+                        true,
+                    )?;
+                    input.with_values(out, true, Some(&self.expr))?;
+                })
+            },
             EvalVariant::Cumulative { min_samples } => {
                 let mut builder = AnonymousOwnedListBuilder::new(
                     self.output_field_with_ctx.name().clone(),

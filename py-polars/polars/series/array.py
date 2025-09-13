@@ -799,3 +799,8 @@ class ArrayNameSpace:
             [2.0, 1.0]
         ]
         """
+
+    def agg(self, expr: Expr) -> Series:
+        """
+        hello
+        """
