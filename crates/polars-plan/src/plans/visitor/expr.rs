@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Formatter};
 
-use polars_core::prelude::{Field, Schema};
+use polars_core::prelude::Field;
+use polars_utils::pl_str::PlSmallStr;
 use polars_utils::unitvec;
 
 use super::*;
@@ -42,6 +43,7 @@ impl TreeWalker for Expr {
         let ret = match self {
             Alias(l, r) => Alias(am(l, f)?, r),
             Column(_) => self,
+            Element => self,
             Literal(_) => self,
             DataTypeFunction(_) => self,
             #[cfg(feature = "dtype-struct")]
@@ -115,9 +117,12 @@ impl AexprNode {
         node_to_expr(self.node, arena)
     }
 
-    pub fn to_field(&self, schema: &Schema, arena: &Arena<AExpr>) -> PolarsResult<Field> {
-        let aexpr = arena.get(self.node);
-        aexpr.to_field(schema, arena)
+    pub fn to_field(&self, ctx: ToFieldContext) -> PolarsResult<Field> {
+        ctx.arena.get(self.node).to_field(ctx)
+    }
+
+    pub fn to_name(&self, arena: &Arena<AExpr>) -> PlSmallStr {
+        arena.get(self.node).to_name(arena)
     }
 
     pub fn assign(&mut self, ae: AExpr, arena: &mut Arena<AExpr>) {

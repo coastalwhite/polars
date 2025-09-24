@@ -211,18 +211,17 @@ where
 
 #[cfg(all(feature = "strings", feature = "concat_str"))]
 fn string_addition_to_linear_concat(
-    expr_arena: &Arena<AExpr>,
     left_node: Node,
     right_node: Node,
     left_aexpr: &AExpr,
     right_aexpr: &AExpr,
-    input_schema: &Schema,
+    ctx: ToFieldContext,
 ) -> Option<AExpr> {
     {
-        let left_e = ExprIR::from_node(left_node, expr_arena);
-        let right_e = ExprIR::from_node(right_node, expr_arena);
+        let left_e = ExprIR::from_node(left_node, ctx.arena);
+        let right_e = ExprIR::from_node(right_node, ctx.arena);
 
-        let get_type = |ae: &AExpr| ae.get_dtype(input_schema, expr_arena).ok();
+        let get_type = |ae: &AExpr| ae.to_dtype(ctx.clone()).ok();
         let type_a = get_type(left_aexpr).or_else(|| get_type(right_aexpr))?;
         let type_b = get_type(right_aexpr).or_else(|| get_type(right_aexpr))?;
 
@@ -441,12 +440,11 @@ impl OptimizationRule for SimplifyExprRule {
                                 #[cfg(all(feature = "strings", feature = "concat_str"))]
                                 {
                                     string_addition_to_linear_concat(
-                                        expr_arena,
                                         *left,
                                         *right,
                                         left_aexpr,
                                         right_aexpr,
-                                        schema,
+                                        ToFieldContext::new(expr_arena, schema, None),
                                     )
                                 }
                                 #[cfg(not(all(feature = "strings", feature = "concat_str")))]

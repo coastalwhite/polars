@@ -22,22 +22,17 @@ fn get_expr(input: &[Node], op: FusedOperator, expr_arena: &Arena<AExpr>) -> AEx
     }
 }
 
-fn check_eligible(
-    left: &Node,
-    right: &Node,
-    expr_arena: &Arena<AExpr>,
-    schema: &Schema,
-) -> PolarsResult<bool> {
-    let field_left = expr_arena.get(*left).to_field(schema, expr_arena)?;
-    let type_right = expr_arena.get(*right).get_dtype(schema, expr_arena)?;
+fn check_eligible(left: &Node, right: &Node, ctx: ToFieldContext<'_>) -> PolarsResult<bool> {
+    let field_left = ctx.arena.get(*left).to_field(ctx.clone())?;
+    let type_right = ctx.arena.get(*right).to_dtype(ctx.clone())?;
     let type_left = &field_left.dtype;
     // Exclude literals for now as these will not benefit from fused operations downstream #9857
     // This optimization would also interfere with the `col -> lit` type-coercion rules
     // And it might also interfere with constant folding which is a more suitable optimizations here
     if type_left.is_primitive_numeric()
         && type_right.is_primitive_numeric()
-        && !has_aexpr_literal(*left, expr_arena)
-        && !has_aexpr_literal(*right, expr_arena)
+        && !has_aexpr_literal(*left, ctx.arena)
+        && !has_aexpr_literal(*right, ctx.arena)
     {
         Ok(true)
     } else {
@@ -82,7 +77,12 @@ impl OptimizationRule for FusedArithmetic {
                         left: a,
                         op: Operator::Multiply,
                         right: b,
-                    } => Ok(check_eligible(left, right, expr_arena, schema)?.then(|| {
+                    } => Ok(check_eligible(
+                        left,
+                        right,
+                        ToFieldContext::new(expr_arena, schema, ctx.element_dtype),
+                    )?
+                    .then(|| {
                         let input = &[*right, *a, *b];
                         get_expr(input, FusedOperator::MultiplyAdd, expr_arena)
                     })),
@@ -94,7 +94,12 @@ impl OptimizationRule for FusedArithmetic {
                             left: a,
                             op: Operator::Multiply,
                             right: b,
-                        } => Ok(check_eligible(left, right, expr_arena, schema)?.then(|| {
+                        } => Ok(check_eligible(
+                            left,
+                            right,
+                            ToFieldContext::new(expr_arena, schema, ctx.element_dtype),
+                        )?
+                        .then(|| {
                             let input = &[*left, *a, *b];
                             get_expr(input, FusedOperator::MultiplyAdd, expr_arena)
                         })),
@@ -117,7 +122,12 @@ impl OptimizationRule for FusedArithmetic {
                         left: a,
                         op: Operator::Multiply,
                         right: b,
-                    } => Ok(check_eligible(left, right, expr_arena, schema)?.then(|| {
+                    } => Ok(check_eligible(
+                        left,
+                        right,
+                        ToFieldContext::new(expr_arena, schema, ctx.element_dtype),
+                    )?
+                    .then(|| {
                         let input = &[*left, *a, *b];
                         get_expr(input, FusedOperator::SubMultiply, expr_arena)
                     })),
@@ -131,7 +141,12 @@ impl OptimizationRule for FusedArithmetic {
                                 left: a,
                                 op: Operator::Multiply,
                                 right: b,
-                            } => Ok(check_eligible(left, right, expr_arena, schema)?.then(|| {
+                            } => Ok(check_eligible(
+                                left,
+                                right,
+                                ToFieldContext::new(expr_arena, schema, ctx.element_dtype),
+                            )?
+                            .then(|| {
                                 let input = &[*a, *b, *right];
                                 get_expr(input, FusedOperator::MultiplySub, expr_arena)
                             })),

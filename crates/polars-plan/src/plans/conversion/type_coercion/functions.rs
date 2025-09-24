@@ -8,11 +8,15 @@ pub(super) fn get_function_dtypes(
     expr_arena: &Arena<AExpr>,
     input_schema: &Schema,
     function: &IRFunctionExpr,
+    element_dtype: Option<&DataType>,
 ) -> PolarsResult<Option<Vec<DataType>>> {
     let mut dtypes = Vec::with_capacity(input.len());
     let mut first = true;
     for e in input {
-        let Some((_, dtype)) = get_aexpr_and_type(expr_arena, e.node(), input_schema) else {
+        let Some((_, dtype)) = get_aexpr_and_type(
+            e.node(),
+            ToFieldContext::new(expr_arena, input_schema, element_dtype),
+        ) else {
             return Ok(None);
         };
 

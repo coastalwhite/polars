@@ -368,6 +368,7 @@ impl Display for ExprIRDisplay<'_> {
                     },
                 }
             },
+            Element => f.write_str("element()"),
             Len => write!(f, "len()"),
             Explode { expr, skip_empty } => {
                 let expr = self.with_root(expr);

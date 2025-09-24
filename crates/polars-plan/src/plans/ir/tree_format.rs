@@ -32,6 +32,7 @@ impl fmt::Display for TreeFmtAExpr<'_> {
                 expr: _,
                 skip_empty: true,
             } => "explode(skip_empty)",
+            AExpr::Element => "element()",
             AExpr::Column(name) => return write!(f, "col({name})"),
             AExpr::Literal(lv) => return write!(f, "lit({lv:?})"),
             AExpr::BinaryExpr { op, .. } => return write!(f, "binary: {op}"),

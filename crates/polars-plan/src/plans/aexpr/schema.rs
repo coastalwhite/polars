@@ -5,48 +5,71 @@ use recursive::recursive;
 
 use super::*;
 
-fn validate_expr(node: Node, arena: &Arena<AExpr>, schema: &Schema) -> PolarsResult<()> {
+fn validate_expr(node: Node, ctx: &mut ToFieldContext) -> PolarsResult<()> {
     let mut ctx = ToFieldContext {
-        schema,
-        arena,
+        schema: ctx.schema,
+        arena: ctx.arena,
         validate: true,
+        element_dtype: ctx.element_dtype,
     };
-    arena.get(node).to_field_impl(&mut ctx).map(|_| ())
+    ctx.arena.get(node).to_field_impl(&mut ctx).map(|_| ())
 }
 
-struct ToFieldContext<'a> {
-    schema: &'a Schema,
-    arena: &'a Arena<AExpr>,
+#[derive(Clone)]
+pub struct ToFieldContext<'a> {
+    pub schema: &'a Schema,
+    pub arena: &'a Arena<AExpr>,
     // Traverse all expressions to validate they are in the schema.
-    validate: bool,
+    pub validate: bool,
+
+    /// When part of a `eval` context, what the datatype of the `pl.element()` expression.
+    pub element_dtype: Option<&'a DataType>,
+}
+
+impl<'a> ToFieldContext<'a> {
+    pub fn new(
+        arena: &'a Arena<AExpr>,
+        schema: &'a Schema,
+        element_dtype: Option<&'a DataType>,
+    ) -> Self {
+        Self {
+            schema,
+            arena,
+            validate: true,
+            element_dtype,
+        }
+    }
+
+    pub fn with_element_dtype(&self, dtype: &'a DataType) -> Self {
+        Self {
+            schema: self.schema,
+            arena: self.arena,
+            validate: false,
+            element_dtype: Some(dtype),
+        }
+    }
 }
 
 impl AExpr {
-    pub fn to_dtype(&self, schema: &Schema, arena: &Arena<AExpr>) -> PolarsResult<DataType> {
-        self.to_field(schema, arena).map(|f| f.dtype)
+    pub fn to_dtype(&self, ctx: ToFieldContext<'_>) -> PolarsResult<DataType> {
+        self.to_field(ctx).map(|f| f.dtype)
     }
 
     /// Get Field result of the expression. The schema is the input data. The provided
     /// context will be used to coerce the type into a List if needed, also known as auto-implode.
     pub fn to_field_with_ctx(
         &self,
-        schema: &Schema,
-        ctx: Context,
-        arena: &Arena<AExpr>,
+        agg_ctx: Context,
+        mut ctx: ToFieldContext<'_>,
     ) -> PolarsResult<Field> {
         // Indicates whether we should auto-implode the result. This is initialized to true if we are
         // in an aggregation context, so functions that return scalars should explicitly set this
         // to false in `to_field_impl`.
-        let agg_list = matches!(ctx, Context::Aggregation);
-        let mut ctx = ToFieldContext {
-            schema,
-            arena,
-            validate: true,
-        };
+        let agg_list = matches!(agg_ctx, Context::Aggregation);
         let mut field = self.to_field_impl(&mut ctx)?;
 
         if agg_list {
-            if !self.is_scalar(arena) {
+            if !self.is_scalar(ctx.arena) {
                 field.coerce(field.dtype().clone().implode());
             }
         }
@@ -56,16 +79,8 @@ impl AExpr {
 
     /// Get Field result of the expression. The schema is the input data. The result will
     /// not be coerced (also known as auto-implode): this is the responsibility of the caller.
-    pub fn to_field(&self, schema: &Schema, arena: &Arena<AExpr>) -> PolarsResult<Field> {
-        let mut ctx = ToFieldContext {
-            schema,
-            arena,
-            validate: true,
-        };
-
-        let field = self.to_field_impl(&mut ctx)?;
-
-        Ok(field)
+    pub fn to_field(&self, mut ctx: ToFieldContext<'_>) -> PolarsResult<Field> {
+        self.to_field_impl(&mut ctx)
     }
 
     /// Get Field result of the expression. The schema is the input data.
@@ -73,11 +88,18 @@ impl AExpr {
     /// This is taken as `&mut bool` as for some expressions this is determined by the upper node
     /// (e.g. `alias`, `cast`).
     #[recursive]
-    pub fn to_field_impl(&self, ctx: &mut ToFieldContext) -> PolarsResult<Field> {
+    fn to_field_impl(&self, ctx: &mut ToFieldContext) -> PolarsResult<Field> {
         use AExpr::*;
         use DataType::*;
         match self {
             Len => Ok(Field::new(PlSmallStr::from_static(LEN), IDX_DTYPE)),
+            Element => match ctx.element_dtype {
+                Some(dtype) => Ok(Field::new(
+                    PlSmallStr::from_static("element"),
+                    dtype.clone(),
+                )),
+                None => polars_bail!(InvalidOperation: "`element` is not allowed in this context"),
+            },
             Window {
                 function,
                 options,
@@ -86,10 +108,10 @@ impl AExpr {
             } => {
                 if ctx.validate {
                     for node in partition_by {
-                        validate_expr(*node, ctx.arena, ctx.schema)?;
+                        validate_expr(*node, ctx)?;
                     }
                     if let Some((node, _)) = order_by {
-                        validate_expr(*node, ctx.arena, ctx.schema)?;
+                        validate_expr(*node, ctx)?;
                     }
                 }
 
@@ -159,14 +181,14 @@ impl AExpr {
             Sort { expr, .. } => ctx.arena.get(*expr).to_field_impl(ctx),
             Gather { expr, idx, .. } => {
                 if ctx.validate {
-                    validate_expr(*idx, ctx.arena, ctx.schema)?
+                    validate_expr(*idx, ctx)?
                 }
                 ctx.arena.get(*expr).to_field_impl(ctx)
             },
             SortBy { expr, .. } => ctx.arena.get(*expr).to_field_impl(ctx),
             Filter { input, by } => {
                 if ctx.validate {
-                    validate_expr(*by, ctx.arena, ctx.schema)?
+                    validate_expr(*by, ctx)?
                 }
                 ctx.arena.get(*input).to_field_impl(ctx)
             },
@@ -297,6 +319,7 @@ impl AExpr {
                     schema: &schema,
                     arena: ctx.arena,
                     validate: ctx.validate,
+                    element_dtype: Some(&element_dtype),
                 };
                 let mut output_field = ctx.arena.get(*evaluation).to_field_impl(&mut ctx)?;
                 output_field.dtype = output_field.dtype.materialize_unknown(false)?;
@@ -326,8 +349,8 @@ impl AExpr {
                 length,
             } => {
                 if ctx.validate {
-                    validate_expr(*offset, ctx.arena, ctx.schema)?;
-                    validate_expr(*length, ctx.arena, ctx.schema)?;
+                    validate_expr(*offset, ctx)?;
+                    validate_expr(*length, ctx)?;
                 }
 
                 ctx.arena.get(*input).to_field_impl(ctx)
@@ -340,6 +363,7 @@ impl AExpr {
         use IRAggExpr::*;
         match self {
             Len => crate::constants::get_len_name(),
+            Element => crate::constants::ELEMENT_NAME.clone(),
             Window {
                 function: expr,
                 options: _,

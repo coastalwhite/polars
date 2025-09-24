@@ -236,7 +236,7 @@ impl<'a> IRBuilder<'a> {
             let field = self
                 .expr_arena
                 .get(node)
-                .to_field(&schema, self.expr_arena)
+                .to_field(ToFieldContext::new(self.expr_arena, &schema, None))
                 .unwrap();
 
             expr_irs.push(

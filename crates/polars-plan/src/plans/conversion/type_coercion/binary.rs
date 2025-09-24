@@ -121,11 +121,16 @@ pub(super) fn process_binary(
     node_left: Node,
     op: Operator,
     node_right: Node,
+    element_dtype: Option<&DataType>,
 ) -> PolarsResult<Option<AExpr>> {
-    let (left, type_left): (&AExpr, DataType) =
-        unpack!(get_aexpr_and_type(expr_arena, node_left, input_schema));
-    let (right, type_right): (&AExpr, DataType) =
-        unpack!(get_aexpr_and_type(expr_arena, node_right, input_schema));
+    let (left, type_left): (&AExpr, DataType) = unpack!(get_aexpr_and_type(
+        node_left,
+        ToFieldContext::new(expr_arena, input_schema, element_dtype)
+    ));
+    let (right, type_right): (&AExpr, DataType) = unpack!(get_aexpr_and_type(
+        node_right,
+        ToFieldContext::new(expr_arena, input_schema, element_dtype)
+    ));
 
     match (&type_left, &type_right) {
         (

@@ -259,19 +259,19 @@ impl ExprIR {
         is_scalar_ae(self.node, expr_arena)
     }
 
-    pub fn dtype(&self, schema: &Schema, expr_arena: &Arena<AExpr>) -> PolarsResult<&DataType> {
+    pub fn dtype(&self, ctx: ToFieldContext) -> PolarsResult<&DataType> {
         match self.output_dtype.get() {
             Some(dtype) => Ok(dtype),
             None => {
-                let dtype = expr_arena.get(self.node).to_dtype(schema, expr_arena)?;
+                let dtype = ctx.arena.get(self.node).to_dtype(ctx)?;
                 let _ = self.output_dtype.set(dtype);
                 Ok(self.output_dtype.get().unwrap())
             },
         }
     }
 
-    pub fn field(&self, schema: &Schema, expr_arena: &Arena<AExpr>) -> PolarsResult<Field> {
-        let dtype = self.dtype(schema, expr_arena)?;
+    pub fn field(&self, ctx: ToFieldContext) -> PolarsResult<Field> {
+        let dtype = self.dtype(ctx)?;
         let name = self.output_name();
         Ok(Field::new(name.clone(), dtype.clone()))
     }

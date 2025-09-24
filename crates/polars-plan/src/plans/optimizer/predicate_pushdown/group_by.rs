@@ -41,8 +41,11 @@ pub(super) fn process_group_by(
     let mut local_predicates = Vec::with_capacity(acc_predicates.len());
     let key_schema = aexprs_to_schema(
         &keys,
-        lp_arena.get(input).schema(lp_arena).as_ref(),
-        expr_arena,
+        ToFieldContext::new(
+            expr_arena,
+            lp_arena.get(input).schema(lp_arena).as_ref(),
+            None,
+        ),
     );
 
     let mut new_acc_predicates = PlHashMap::with_capacity(acc_predicates.len());

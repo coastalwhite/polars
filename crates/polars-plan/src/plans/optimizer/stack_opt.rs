@@ -1,4 +1,4 @@
-use polars_core::prelude::PolarsResult;
+use polars_core::prelude::{DataType, PolarsResult};
 use polars_core::schema::Schema;
 
 use crate::plans::aexpr::AExpr;
@@ -94,11 +94,12 @@ impl StackOptimizer {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct OptimizeExprContext {
+pub struct OptimizeExprContext<'a> {
     pub in_pyarrow_scan: bool,
     pub in_io_plugin: bool,
     pub in_filter: bool,
     pub has_inputs: bool,
+    pub element_dtype: Option<&'a DataType>,
 }
 
 pub trait OptimizationRule {

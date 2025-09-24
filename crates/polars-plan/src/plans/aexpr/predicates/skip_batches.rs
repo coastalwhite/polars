@@ -112,6 +112,7 @@ fn aexpr_to_skip_batch_predicate_rec(
         match arena.get(e) {
             AExpr::Explode { .. } => None,
             AExpr::Column(_) => None,
+            AExpr::Element => None,
             AExpr::Literal(_) => None,
             AExpr::BinaryExpr { left, op, right } => {
                 let left = *left;

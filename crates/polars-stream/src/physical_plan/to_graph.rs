@@ -67,7 +67,7 @@ struct GraphConversionContext<'a> {
     expr_arena: &'a mut Arena<AExpr>,
     graph: Graph,
     phys_to_graph: SecondaryMap<PhysNodeKey, GraphNodeKey>,
-    expr_conversion_state: ExpressionConversionState,
+    expr_conversion_state: ExpressionConversionState<'a>,
     num_pipelines: usize,
 }
 
@@ -253,7 +253,12 @@ fn to_graph_rec<'a>(
             let mut inputs = Vec::with_capacity(reductions.len());
 
             for e in exprs {
-                let (red, input_node) = into_reduction(e.node(), ctx.expr_arena, input_schema)?;
+                let (red, input_node) = into_reduction(
+                    e.node(),
+                    ctx.expr_arena,
+                    input_schema,
+                    None,
+                )?;
                 reductions.push(red);
 
                 let input_phys = create_stream_expr(
@@ -752,7 +757,7 @@ fn to_graph_rec<'a>(
                     AExpr::Agg(IRAggExpr::First(..) | IRAggExpr::Last(..))
                 );
                 let (reduction, input_node) =
-                    into_reduction(agg.node(), ctx.expr_arena, input_schema)?;
+                    into_reduction(agg.node(), ctx.expr_arena, input_schema, None)?;
                 let AExpr::Column(col) = ctx.expr_arena.get(input_node) else {
                     unreachable!()
                 };

@@ -6,6 +6,8 @@ use recursive::recursive;
 use crate::expressions as phys_expr;
 use crate::expressions::*;
 
+const PL_ELEMENT_COLUMN_NAME: PlSmallStr = PlSmallStr::from_static("__PL_ELEMENT");
+
 pub fn get_expr_depth_limit() -> PolarsResult<u16> {
     let depth = if let Ok(d) = std::env::var("POLARS_MAX_EXPR_DEPTH") {
         let v = d
@@ -91,7 +93,7 @@ where
 }
 
 #[derive(Copy, Clone)]
-pub struct ExpressionConversionState {
+pub struct ExpressionConversionState<'a> {
     // settings per context
     // they remain activate between
     // expressions
@@ -99,17 +101,18 @@ pub struct ExpressionConversionState {
     pub has_windows: bool,
     // settings per expression
     // those are reset every expression
-    local: LocalConversionState,
+    local: LocalConversionState<'a>,
 }
 
 #[derive(Copy, Clone, Default)]
-struct LocalConversionState {
+struct LocalConversionState<'a> {
     has_implode: bool,
     has_window: bool,
     has_lit: bool,
+    element_dtype: Option<&'a DataType>,
 }
 
-impl ExpressionConversionState {
+impl<'a> ExpressionConversionState<'a> {
     pub fn new(allow_threading: bool) -> Self {
         Self {
             allow_threading,
@@ -118,6 +121,11 @@ impl ExpressionConversionState {
                 ..Default::default()
             },
         }
+    }
+
+    pub fn with_element_dtype(mut self, dtype: &'a DataType) -> Self {
+        self.local.element_dtype = Some(dtype);
+        self
     }
 
     fn reset(&mut self) {
@@ -166,6 +174,20 @@ fn create_physical_expr_inner(
 
     match expr_arena.get(expression) {
         Len => Ok(Arc::new(phys_expr::CountExpr::new())),
+        Element => match state.local.element_dtype {
+            None => {
+                panic!("`element` is not allowed in this context. Should have been caught before.")
+            },
+            Some(dtype) => Ok(Arc::new(phys_expr::ColumnExpr::new(
+                PL_ELEMENT_COLUMN_NAME.clone(),
+                Expr::Element,
+                Arc::new({
+                    let mut schema = schema.as_ref().clone();
+                    schema.insert(PL_ELEMENT_COLUMN_NAME.clone(), dtype.clone());
+                    schema
+                }),
+            ))),
+        },
         Window {
             function,
             partition_by,
@@ -285,7 +307,11 @@ fn create_physical_expr_inner(
             )))
         },
         BinaryExpr { left, op, right } => {
-            let output_field = expr_arena.get(expression).to_field(schema, expr_arena)?;
+            let output_field = expr_arena.get(expression).to_field(ToFieldContext::new(
+                expr_arena,
+                schema,
+                state.local.element_dtype,
+            ))?;
             let is_scalar = is_scalar_ae(expression, expr_arena);
             let lhs = create_physical_expr_inner(*left, ctxt, expr_arena, schema, state)?;
             let rhs = create_physical_expr_inner(*right, ctxt, expr_arena, schema, state)?;
@@ -408,9 +434,8 @@ fn create_physical_expr_inner(
                     }
 
                     let field = expr_arena.get(expression).to_field_with_ctx(
-                        schema,
                         Context::Aggregation,
-                        expr_arena,
+                        ToFieldContext::new(expr_arena, schema, state.local.element_dtype),
                     )?;
 
                     let groupby = GroupByMethod::from(agg.clone());
@@ -468,9 +493,10 @@ fn create_physical_expr_inner(
             fmt_str: _,
         } => {
             let is_scalar = is_scalar_ae(expression, expr_arena);
-            let output_field = expr_arena
-                .get(expression)
-                .to_field_with_ctx(schema, ctxt, expr_arena)?;
+            let output_field = expr_arena.get(expression).to_field_with_ctx(
+                ctxt,
+                ToFieldContext::new(expr_arena, schema, state.local.element_dtype),
+            )?;
 
             let input =
                 create_physical_expressions_from_irs(input, ctxt, expr_arena, schema, state)?;
@@ -499,12 +525,18 @@ fn create_physical_expr_inner(
             let mut pd_group = ExprPushdownGroup::Pushable;
             pd_group.update_with_expr_rec(expr_arena.get(*evaluation), expr_arena, None);
 
-            let output_field_with_ctx = expr_arena
-                .get(expression)
-                .to_field_with_ctx(schema, ctxt, expr_arena)?;
-            let non_aggregated_output_field =
-                expr_arena.get(expression).to_field(schema, expr_arena)?;
-            let input_field = expr_arena.get(*expr).to_field(schema, expr_arena)?;
+            let output_field_with_ctx = expr_arena.get(expression).to_field_with_ctx(
+                ctxt,
+                ToFieldContext::new(expr_arena, schema, state.local.element_dtype),
+            )?;
+            let non_aggregated_output_field = expr_arena.get(expression).to_field(
+                ToFieldContext::new(expr_arena, schema, state.local.element_dtype),
+            )?;
+            let input_field = expr_arena.get(*expr).to_field(ToFieldContext::new(
+                expr_arena,
+                schema,
+                state.local.element_dtype,
+            ))?;
             let expr =
                 create_physical_expr_inner(*expr, Context::Default, expr_arena, schema, state)?;
 
@@ -515,7 +547,7 @@ fn create_physical_expr_inner(
                 Context::Default,
                 expr_arena,
                 &Arc::new(eval_schema),
-                state,
+                &mut state.with_element_dtype(element_dtype),
             )?;
 
             Ok(Arc::new(EvalExpr::new(
@@ -537,9 +569,10 @@ fn create_physical_expr_inner(
             options,
         } => {
             let is_scalar = is_scalar_ae(expression, expr_arena);
-            let output_field = expr_arena
-                .get(expression)
-                .to_field_with_ctx(schema, ctxt, expr_arena)?;
+            let output_field = expr_arena.get(expression).to_field_with_ctx(
+                ctxt,
+                ToFieldContext::new(expr_arena, schema, state.local.element_dtype),
+            )?;
             let input =
                 create_physical_expressions_from_irs(input, ctxt, expr_arena, schema, state)?;
 
@@ -578,9 +611,10 @@ fn create_physical_expr_inner(
                 move |c: &mut [polars_core::frame::column::Column]| c[0].explode(skip_empty),
             ) as Arc<dyn ColumnsUdf>);
 
-            let field = expr_arena
-                .get(expression)
-                .to_field_with_ctx(schema, ctxt, expr_arena)?;
+            let field = expr_arena.get(expression).to_field_with_ctx(
+                ctxt,
+                ToFieldContext::new(expr_arena, schema, state.local.element_dtype),
+            )?;
 
             Ok(Arc::new(ApplyExpr::new(
                 vec![input],

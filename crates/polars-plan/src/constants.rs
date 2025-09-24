@@ -7,6 +7,7 @@ pub static POLARS_TMP_PREFIX: &str = "_POLARS_";
 pub static POLARS_PLACEHOLDER: &str = "_POLARS_<>";
 pub const LEN: &str = "len";
 const LITERAL_NAME: &str = "literal";
+pub static ELEMENT_NAME: PlSmallStr = PlSmallStr::from_static("element");
 
 // Cache the often used LITERAL and LEN constants
 static LITERAL_NAME_INIT: OnceLock<PlSmallStr> = OnceLock::new();

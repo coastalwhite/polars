@@ -88,6 +88,7 @@ impl AsRef<Expr> for AggExpr {
 pub enum Expr {
     Alias(Arc<Expr>, PlSmallStr),
     Column(PlSmallStr),
+    Element,
     Selector(Selector),
     Literal(LiteralValue),
     DataTypeFunction(DataTypeFunction),
@@ -258,12 +259,8 @@ impl Hash for Expr {
         d.hash(state);
         match self {
             Expr::Column(name) => name.hash(state),
-            // Expr::Columns(names) => names.hash(state),
-            // Expr::DtypeColumn(dtypes) => dtypes.hash(state),
-            // Expr::IndexColumn(indices) => indices.hash(state),
             Expr::Literal(lv) => std::mem::discriminant(lv).hash(state),
             Expr::Selector(s) => s.hash(state),
-            // Expr::Nth(v) => v.hash(state),
             Expr::DataTypeFunction(v) => v.hash(state),
             Expr::Filter { input, by } => {
                 input.hash(state);
@@ -315,7 +312,7 @@ impl Hash for Expr {
                 returns_scalar.hash(state);
             },
             // already hashed by discriminant
-            Expr::Len => {},
+            Expr::Len | Expr::Element => {},
             Expr::SortBy {
                 expr,
                 by,
@@ -416,7 +413,12 @@ impl Expr {
         ctx.allow_unknown = true;
         let expr = to_expr_ir(self.clone(), &mut ctx)?;
         let (node, output_name) = expr.into_inner();
-        let dtype = expr_arena.get(node).to_dtype(schema, expr_arena)?;
+        let dtype = expr_arena.get(node).to_dtype(ToFieldContext {
+            schema,
+            arena: expr_arena,
+            validate: true,
+            element_dtype: todo!(),
+        })?;
         Ok(Field::new(output_name.into_inner().unwrap(), dtype))
     }
 

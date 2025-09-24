@@ -55,7 +55,7 @@ pub fn is_order_sensitive_top_level(aexpr: &AExpr) -> bool {
             expr: _,
             skip_empty: _,
         } => true,
-        AExpr::Column(_) => false,
+        AExpr::Column(_) | AExpr::Element => false,
         AExpr::Literal(lv) => !lv.is_scalar(),
         AExpr::BinaryExpr {
             left: _,

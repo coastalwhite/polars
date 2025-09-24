@@ -147,6 +147,7 @@ pub fn is_input_independent_rec(
             options: _,
         } => is_input_independent_rec(*inner, arena, cache),
         AExpr::Column(_) => false,
+        AExpr::Element => false,
         AExpr::Literal(_) => true,
         AExpr::BinaryExpr { left, op: _, right } => {
             is_input_independent_rec(*left, arena, cache)
@@ -288,7 +289,7 @@ pub fn is_length_preserving_rec(
         | AExpr::Len
         | AExpr::Literal(_) => false,
 
-        AExpr::Column(_) => true,
+        AExpr::Column(_) | AExpr::Element => true,
 
         AExpr::Cast {
             expr: inner,
@@ -574,6 +575,9 @@ fn lower_exprs_with_ctx(
         }
 
         match ctx.expr_arena.get(expr).clone() {
+            // Handled in `eval` lowering.
+            AExpr::Element => unreachable!(),
+
             AExpr::Explode {
                 expr: inner,
                 skip_empty,
@@ -639,12 +643,15 @@ fn lower_exprs_with_ctx(
                 let input_schema = &ctx.phys_sm[input.node].output_schema;
                 let out_name = unique_column_name();
                 let first_ir = inner_exprs[0].with_alias(out_name.clone());
-                let out_dtype = first_ir.dtype(input_schema, ctx.expr_arena)?;
+                let out_dtype =
+                    first_ir.dtype(ToFieldContext::new(ctx.expr_arena, input_schema, None))?;
                 let mut value_expr_ir = inner_exprs[1].with_alias(out_name.clone());
                 let repeats_expr_ir = inner_exprs[2].clone();
 
                 // Cast the value if necessary.
-                if value_expr_ir.dtype(input_schema, ctx.expr_arena)? != out_dtype {
+                if value_expr_ir.dtype(ToFieldContext::new(ctx.expr_arena, input_schema, None))?
+                    != out_dtype
+                {
                     let cast_expr = AExpr::Cast {
                         expr: value_expr_ir.node(),
                         dtype: out_dtype.clone(),
@@ -760,7 +767,9 @@ fn lower_exprs_with_ctx(
                 let tmp_count_name = unique_column_name();
 
                 let input_expr = &inner_exprs[0];
-                let output_dtype = input_expr.dtype(input_schema, ctx.expr_arena)?.clone();
+                let output_dtype = input_expr
+                    .dtype(ToFieldContext::new(ctx.expr_arena, input_schema, None))?
+                    .clone();
                 let group_by_output_schema = Arc::new(Schema::from_iter([
                     (key_name.clone(), output_dtype),
                     (tmp_count_name.clone(), IDX_DTYPE),
@@ -822,7 +831,8 @@ fn lower_exprs_with_ctx(
                 let tmp_count_name = unique_column_name();
 
                 let input_expr = &inner_exprs[0];
-                let output_field = input_expr.field(input_schema, ctx.expr_arena)?;
+                let output_field =
+                    input_expr.field(ToFieldContext::new(ctx.expr_arena, input_schema, None))?;
                 let group_by_output_schema = Arc::new(Schema::from_iter([
                     output_field.clone().with_name(tmp_value_name.clone()),
                     Field::new(tmp_count_name.clone(), IDX_DTYPE),
@@ -1088,7 +1098,8 @@ fn lower_exprs_with_ctx(
                 let input_schema = &ctx.phys_sm[input.node].output_schema;
 
                 let value_key = unique_column_name();
-                let value_dtype = agg_expr.to_dtype(input_schema, ctx.expr_arena)?;
+                let value_dtype =
+                    agg_expr.to_dtype(ToFieldContext::new(ctx.expr_arena, input_schema, None))?;
 
                 let input = build_select_stream_with_ctx(
                     input,
@@ -1130,11 +1141,17 @@ fn lower_exprs_with_ctx(
                 //    expr - expr.shift(offset)
 
                 let base_expr_ir = &inner_exprs[0];
-                let base_dtype =
-                    base_expr_ir.dtype(&ctx.phys_sm[input.node].output_schema, ctx.expr_arena)?;
+                let base_dtype = base_expr_ir.dtype(ToFieldContext::new(
+                    ctx.expr_arena,
+                    &ctx.phys_sm[input.node].output_schema,
+                    None,
+                ))?;
                 let offset_expr_ir = &inner_exprs[1];
-                let offset_dtype =
-                    offset_expr_ir.dtype(&ctx.phys_sm[input.node].output_schema, ctx.expr_arena)?;
+                let offset_dtype = offset_expr_ir.dtype(ToFieldContext::new(
+                    ctx.expr_arena,
+                    &ctx.phys_sm[input.node].output_schema,
+                    None,
+                ))?;
 
                 let mut base = AExprBuilder::new_from_node(base_expr_ir.node());
                 let cast_dtype = match base_dtype {
@@ -1193,7 +1210,11 @@ fn lower_exprs_with_ctx(
                 let input_schema = &ctx.phys_sm[input.node].output_schema;
 
                 let value_key = unique_column_name();
-                let value_dtype = inner_exprs[0].dtype(input_schema, ctx.expr_arena)?;
+                let value_dtype = inner_exprs[0].dtype(ToFieldContext::new(
+                    ctx.expr_arena,
+                    input_schema,
+                    None,
+                ))?;
 
                 let input = build_select_stream_with_ctx(
                     input,
@@ -1872,7 +1893,7 @@ pub fn compute_output_schema(
         .map(|e| {
             let name = e.output_name().clone();
             let dtype = e
-                .dtype(input_schema, expr_arena)?
+                .dtype(ToFieldContext::new(expr_arena, input_schema, None))?
                 .clone()
                 .materialize_unknown(true)
                 .unwrap();
@@ -2016,7 +2037,8 @@ pub fn build_hstack_stream(
         for expr in exprs {
             output_schema.insert(
                 expr.output_name().clone(),
-                expr.dtype(input_schema, expr_arena)?.clone(),
+                expr.dtype(ToFieldContext::new(expr_arena, input_schema, None))?
+                    .clone(),
             );
         }
         let output_schema = Arc::new(output_schema);

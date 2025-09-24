@@ -39,6 +39,7 @@ impl fmt::Debug for Expr {
             },
             DataTypeFunction(dtype_fn) => fmt::Debug::fmt(dtype_fn, f),
             Len => write!(f, "len()"),
+            Element => write!(f, "element()"),
             Explode {
                 input: expr,
                 skip_empty: false,

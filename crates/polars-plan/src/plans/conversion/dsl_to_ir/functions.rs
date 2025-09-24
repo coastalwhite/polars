@@ -993,7 +993,7 @@ pub(super) fn convert_functions(
         F::RowEncode(v) => {
             let dts = e
                 .iter()
-                .map(|e| Ok(e.dtype(ctx.schema, ctx.arena)?.clone()))
+                .map(|e| Ok(e.dtype(ctx.to_field_ctx())?.clone()))
                 .collect::<PolarsResult<Vec<_>>>()?;
             I::RowEncode(dts, v)
         },

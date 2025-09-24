@@ -16,16 +16,15 @@ pub(super) fn resolve_is_in(
     op: &'static str,
     flat_idx: usize,
     nested_idx: usize,
+    element_dtype: Option<&DataType>,
 ) -> PolarsResult<Option<IsInTypeCoercionResult>> {
     let (_, type_left) = unpack!(get_aexpr_and_type(
-        expr_arena,
         input[flat_idx].node(),
-        input_schema
+        ToFieldContext::new(expr_arena, input_schema, element_dtype,)
     ));
     let (_, type_other) = unpack!(get_aexpr_and_type(
-        expr_arena,
         input[nested_idx].node(),
-        input_schema
+        ToFieldContext::new(expr_arena, input_schema, element_dtype,)
     ));
 
     let left_nl = type_left.nesting_level();

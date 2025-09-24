@@ -1,5 +1,6 @@
 use super::functions::convert_functions;
 use super::*;
+use crate::constants::ELEMENT_NAME;
 use crate::plans::iterator::ArenaExprIter;
 
 pub fn to_expr_ir(expr: Expr, ctx: &mut ExprToIRContext) -> PolarsResult<ExprIR> {
@@ -54,6 +55,7 @@ pub struct ExprToIRContext<'a> {
     pub allow_unknown: bool,
     /// Check whether mentioned column names exist in the schema.
     pub check_column_names: bool,
+    pub element_dtype: Option<&'a DataType>,
 }
 
 impl<'a> ExprToIRContext<'a> {
@@ -64,6 +66,7 @@ impl<'a> ExprToIRContext<'a> {
             schema,
             allow_unknown: false,
             check_column_names: true,
+            element_dtype: None,
         }
     }
 
@@ -82,6 +85,10 @@ impl<'a> ExprToIRContext<'a> {
         ctx.allow_unknown = true;
         ctx.check_column_names = false;
         ctx
+    }
+
+    pub fn to_field_ctx(&self) -> ToFieldContext<'_> {
+        ToFieldContext::new(self.arena, self.schema, self.element_dtype)
     }
 }
 
@@ -335,7 +342,7 @@ pub(super) fn to_aexpr_impl(
 
             let fields = input
                 .iter()
-                .map(|e| e.field(ctx.schema, ctx.arena))
+                .map(|e| e.field(ctx.to_field_ctx()))
                 .collect::<PolarsResult<Vec<_>>>()?;
 
             let function = function.materialize()?;
@@ -409,7 +416,11 @@ pub(super) fn to_aexpr_impl(
             variant,
         } => {
             let (expr, output_name) = recurse_arc!(expr)?;
-            let expr_dtype = ctx.arena.get(expr).to_dtype(ctx.schema, ctx.arena)?;
+            let expr_dtype = ctx.arena.get(expr).to_dtype(ToFieldContext::new(
+                ctx.arena,
+                ctx.schema,
+                ctx.element_dtype,
+            ))?;
             let element_dtype = variant.element_dtype(&expr_dtype)?;
 
             // Perform this before schema resolution so that we can better error messages.
@@ -430,6 +441,7 @@ pub(super) fn to_aexpr_impl(
                 arena: ctx.arena,
                 allow_unknown: ctx.allow_unknown,
                 check_column_names: ctx.check_column_names,
+                element_dtype: Some(element_dtype),
             };
             let (evaluation, _) = to_aexpr_impl(owned(evaluation), &mut evaluation_ctx)?;
 
@@ -452,6 +464,7 @@ pub(super) fn to_aexpr_impl(
                 output_name,
             )
         },
+        Expr::Element => (AExpr::Element, ELEMENT_NAME.clone()),
         Expr::Len => (AExpr::Len, get_len_name()),
         Expr::KeepName(expr) => {
             let (expr, _) = to_aexpr_impl(owned(expr), ctx)?;

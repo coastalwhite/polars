@@ -21,11 +21,12 @@ pub fn into_reduction(
     node: Node,
     expr_arena: &mut Arena<AExpr>,
     schema: &Schema,
+    element_dtype: Option<&DataType>,
 ) -> PolarsResult<(Box<dyn GroupedReduction>, Node)> {
     let get_dt = |node| {
         expr_arena
             .get(node)
-            .to_dtype(schema, expr_arena)?
+            .to_dtype(ToFieldContext::new(expr_arena, schema, element_dtype))?
             .materialize_unknown(false)
     };
     let out = match expr_arena.get(node) {

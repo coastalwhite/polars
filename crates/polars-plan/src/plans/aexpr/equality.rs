@@ -78,6 +78,7 @@ impl AExpr {
             E::Filter { input: _, by: _ } |
             E::Ternary { predicate: _, truthy: _, falsy: _ } |
             E::Slice { input: _, offset: _, length: _ } |
+            E::Element |
             E::Len => true,
         };
 

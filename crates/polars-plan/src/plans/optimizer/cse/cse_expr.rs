@@ -851,8 +851,7 @@ impl CommonSubExprOptimizer {
                     // rule we apply for determining the name will not work we now refer to
                     // intermediate temporary names starting with the `CSE_REPLACED` constant.
                     if !e.has_alias() {
-                        let name = ae_node.to_field(schema, expr_arena)?.name;
-                        out_e.set_alias(name.clone());
+                        out_e.set_alias(ae_node.to_name(expr_arena));
                     }
                     out_e
                 };

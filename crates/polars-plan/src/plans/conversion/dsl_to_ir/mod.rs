@@ -407,7 +407,9 @@ pub fn to_alp_impl(lp: DslPlan, ctxt: &mut DslConversionContext) -> PolarsResult
                 let mut null_columns = vec![];
 
                 for (i, c) in by_column.iter().enumerate() {
-                    if let DataType::Null = c.dtype(&input_schema, ctxt.expr_arena)? {
+                    if let DataType::Null =
+                        c.dtype(ToFieldContext::new(ctxt.expr_arena, &input_schema, None))?
+                    {
                         null_columns.push(i);
                     }
                 }
@@ -1106,7 +1108,7 @@ fn resolve_with_columns(
         &mut ExprToIRContext::new_with_opt_eager(expr_arena, &input_schema, opt_flags),
     )?;
     for eir in eirs.iter() {
-        let field = eir.field(&input_schema, expr_arena)?;
+        let field = eir.field(ToFieldContext::new(expr_arena, &input_schema, None))?;
 
         if !output_names.insert(field.name().clone()) {
             let msg = format!(

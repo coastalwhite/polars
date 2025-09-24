@@ -28,6 +28,7 @@ mod properties;
 pub use aexpr::function_expr::schema::FieldsMapper;
 pub use builder::AExprBuilder;
 pub use properties::*;
+pub use schema::ToFieldContext;
 
 use crate::constants::LEN;
 use crate::plans::Context;
@@ -244,6 +245,9 @@ pub enum AExpr {
         offset: Node,
         length: Node,
     },
+
+    /// `pl.element()`
+    Element,
     #[default]
     Len,
 }
@@ -252,11 +256,6 @@ impl AExpr {
     #[cfg(feature = "cse")]
     pub(crate) fn col(name: PlSmallStr) -> Self {
         AExpr::Column(name)
-    }
-
-    /// This should be a 1 on 1 copy of the get_type method of Expr until Expr is completely phased out.
-    pub fn get_dtype(&self, schema: &Schema, arena: &Arena<AExpr>) -> PolarsResult<DataType> {
-        self.to_field(schema, arena).map(|f| f.dtype().clone())
     }
 
     #[recursive::recursive]
@@ -299,6 +298,7 @@ impl AExpr {
             AExpr::Window { function, .. } => is_scalar_ae(*function, arena),
             AExpr::Explode { .. }
             | AExpr::Column(_)
+            | AExpr::Element
             | AExpr::Filter { .. }
             | AExpr::Slice { .. } => false,
         }

@@ -269,6 +269,7 @@ fn expand_expression_rec(
                 |e| Expr::Alias(Arc::new(e), name.clone()),
             )?
         },
+        Expr::Element => out.push(expr.clone()),
         Expr::Column(_) => out.push(expr.clone()),
         Expr::Selector(selector) => {
             let columns = selector.into_columns(schema, ignored_selector_columns)?;

@@ -7,6 +7,7 @@ use polars_utils::arena::{Arena, Node};
 
 use super::{AExpr, IR, OptimizationRule};
 use crate::dsl::{FileSinkType, FileType, PartitionSinkTypeIR, PartitionVariantIR, SinkTypeIR};
+use crate::plans::ToFieldContext;
 use crate::plans::conversion::get_input_schema;
 
 pub struct TypeCheckRule;
@@ -25,7 +26,11 @@ impl OptimizationRule for TypeCheckRule {
                 ..
             } => {
                 let input_schema = get_input_schema(ir_arena, node);
-                let dtype = predicate.dtype(input_schema.as_ref(), expr_arena)?;
+                let dtype = predicate.dtype(ToFieldContext::new(
+                    expr_arena,
+                    input_schema.as_ref(),
+                    None,
+                ))?;
 
                 polars_ensure!(
                     matches!(dtype, DataType::Boolean | DataType::Unknown(_)),
@@ -36,7 +41,11 @@ impl OptimizationRule for TypeCheckRule {
             },
             IR::Filter { predicate, .. } => {
                 let input_schema = get_input_schema(ir_arena, node);
-                let dtype = predicate.dtype(input_schema.as_ref(), expr_arena)?;
+                let dtype = predicate.dtype(ToFieldContext::new(
+                    expr_arena,
+                    input_schema.as_ref(),
+                    None,
+                ))?;
 
                 polars_ensure!(
                     matches!(dtype, DataType::Boolean | DataType::Unknown(_)),
@@ -171,7 +180,11 @@ impl OptimizationRule for TypeCheckRule {
                         {
                             let mut input_schema_mut = input_schema.as_ref().as_ref().clone();
                             for e in key_exprs {
-                                let field = e.field(&input_schema_mut, expr_arena)?;
+                                let field = e.field(ToFieldContext::new(
+                                    expr_arena,
+                                    input_schema.as_ref(),
+                                    None,
+                                ))?;
                                 if *include_key {
                                     input_schema_mut.insert(field.name, field.dtype);
                                 } else {
