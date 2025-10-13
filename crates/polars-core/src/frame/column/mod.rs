@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use arrow::bitmap::BitmapBuilder;
+use arrow::bitmap::{Bitmap, BitmapBuilder};
 use arrow::trusted_len::TrustMyLength;
 use num_traits::{Num, NumCast};
 use polars_compute::rolling::QuantileMethod;
@@ -1902,6 +1902,11 @@ impl Column {
         self.as_materialized_series()
             .propagate_nulls()
             .map(Column::from)
+    }
+
+    pub fn rechunk_validity(&self) -> Option<Bitmap> {
+        // @scalar-opt
+        self.as_materialized_series().rechunk_validity()
     }
 }
 
