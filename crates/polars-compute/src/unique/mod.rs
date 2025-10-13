@@ -60,10 +60,12 @@ pub trait GenericUniqueKernel {
     fn n_unique_non_null(&self) -> usize;
 }
 
+mod amortized_arg_unique;
 mod boolean;
 mod dictionary;
 mod primitive;
 
+pub use amortized_arg_unique::{AmortizedUnique, amortized_unique_from_dtype};
 pub use boolean::BooleanUniqueKernelState;
 pub use dictionary::DictionaryRangedUniqueState;
 pub use primitive::PrimitiveRangedUniqueState;

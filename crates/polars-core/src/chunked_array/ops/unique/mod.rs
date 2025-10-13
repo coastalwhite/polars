@@ -9,6 +9,8 @@ use crate::hashing::_HASHMAP_INIT_SIZE;
 use crate::prelude::*;
 use crate::series::IsSorted;
 
+pub mod arg_unique;
+
 fn finish_is_unique_helper(
     unique_idx: Vec<IdxSize>,
     len: IdxSize,
