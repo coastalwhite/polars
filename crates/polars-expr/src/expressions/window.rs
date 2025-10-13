@@ -3,6 +3,7 @@ use std::fmt::Write;
 use arrow::array::PrimitiveArray;
 use arrow::bitmap::Bitmap;
 use polars_core::prelude::*;
+use polars_core::series::amortized_iter::AmortSeries;
 use polars_core::series::IsSorted;
 use polars_core::utils::_split_offsets;
 use polars_core::{POOL, downcast_as_macro_arg_physical};
@@ -330,20 +331,13 @@ impl WindowExpr {
             (_, AggState::LiteralScalar(_)) => Ok(MapStrategy::Nothing),
         }
     }
-}
 
-// Utility to create partitions and cache keys
-pub fn window_function_format_order_by(to: &mut String, e: &Expr, k: &SortOptions) {
-    write!(to, "_PL_{:?}{}_{}", e, k.descending, k.nulls_last).unwrap();
-}
-
-impl PhysicalExpr for WindowExpr {
-    // Note: this was first implemented with expression evaluation but this performed really bad.
-    // Therefore we choose the group_by -> apply -> self join approach
-
-    // This first cached the group_by and the join tuples, but rayon under a mutex leads to deadlocks:
-    // https://github.com/rayon-rs/rayon/issues/592
-    fn evaluate(&self, df: &DataFrame, state: &ExecutionState) -> PolarsResult<Column> {
+    fn evaluate_on(
+        &self,
+        group_by: &[Column],
+        order_by: Option<&Column>,
+        phys_function: &Column,
+    ) -> PolarsResult<Column> {
         // This method does the following:
         // 1. determine group_by tuples based on the group_column
         // 2. apply an aggregation function
@@ -369,28 +363,6 @@ impl PhysicalExpr for WindowExpr {
         //          This can be used to reverse, sort, shuffle etc. the values in a group
 
         // 4. select the final column and return
-
-        if df.is_empty() {
-            let field = self.phys_function.to_field(df.schema())?;
-            match self.mapping {
-                WindowMapping::Join => {
-                    return Ok(Column::full_null(
-                        field.name().clone(),
-                        0,
-                        &DataType::List(Box::new(field.dtype().clone())),
-                    ));
-                },
-                _ => {
-                    return Ok(Column::full_null(field.name().clone(), 0, field.dtype()));
-                },
-            }
-        }
-
-        let group_by_columns = self
-            .group_by
-            .iter()
-            .map(|e| e.evaluate(df, state))
-            .collect::<PolarsResult<Vec<_>>>()?;
 
         // if the keys are sorted
         let sorted_keys = group_by_columns.iter().all(|s| {
@@ -597,6 +569,49 @@ impl PhysicalExpr for WindowExpr {
             },
         }
     }
+}
+
+// Utility to create partitions and cache keys
+pub fn window_function_format_order_by(to: &mut String, e: &Expr, k: &SortOptions) {
+    write!(to, "_PL_{:?}{}_{}", e, k.descending, k.nulls_last).unwrap();
+}
+
+impl PhysicalExpr for WindowExpr {
+    // Note: this was first implemented with expression evaluation but this performed really bad.
+    // Therefore we choose the group_by -> apply -> self join approach
+
+    // This first cached the group_by and the join tuples, but rayon under a mutex leads to deadlocks:
+    // https://github.com/rayon-rs/rayon/issues/592
+    fn evaluate(&self, df: &DataFrame, state: &ExecutionState) -> PolarsResult<Column> {
+        if df.is_empty() {
+            let field = self.phys_function.to_field(df.schema())?;
+            match self.mapping {
+                WindowMapping::Join => {
+                    return Ok(Column::full_null(
+                        field.name().clone(),
+                        0,
+                        &DataType::List(Box::new(field.dtype().clone())),
+                    ));
+                },
+                _ => {
+                    return Ok(Column::full_null(field.name().clone(), 0, field.dtype()));
+                },
+            }
+        }
+
+        let group_by_columns = self
+            .group_by
+            .iter()
+            .map(|e| e.evaluate(df, state))
+            .collect::<PolarsResult<Vec<_>>>()?;
+
+        let order_by = match self
+            .order_by
+            .iter()
+            .map(|e| e.evaluate(df, state))
+            .collect::<PolarsResult<Vec<_>>>()?;
+
+    }
 
     fn to_field(&self, _input_schema: &Schema) -> PolarsResult<Field> {
         Ok(self.output_field.clone())
@@ -609,11 +624,45 @@ impl PhysicalExpr for WindowExpr {
     #[allow(clippy::ptr_arg)]
     fn evaluate_on_groups<'a>(
         &self,
-        _df: &DataFrame,
-        _groups: &'a GroupPositions,
-        _state: &ExecutionState,
+        df: &DataFrame,
+        groups: &'a GroupPositions,
+        state: &ExecutionState,
     ) -> PolarsResult<AggregationContext<'a>> {
-        polars_bail!(InvalidOperation: "window expression not allowed in aggregation");
+        polars_warn!(PerformanceWarning: "nested window functions can slow and memory intensive");
+
+        let acs = self
+            .group_by
+            .map(|gb| gb.as_ref())
+            .chain(self.order_by.as_deref())
+            .chain(self.phys_function.as_ref())
+            .map(|e| e.evaluate_on_groups(df, groups, state))
+            .collect::<PolarsResult<Vec<_>>>()?;
+
+        let cas = acs.iter().map(|ac| ac.aggregated_as_list()).collect::<Vec<_>>();
+        assert!(cas.iter().all_equal(|ca| ca.len()));
+        let length = cas[0].len();
+
+        let iters = cas.iter().map(|ca| ca.amortized_iter()).collect::<Vec<_>>();
+
+        let mut amor_series: Vec<AmortSeries> = Vec::with_capacity(cas);
+        let out = (0..length)
+            .map(|_| {
+                amor_series.clear();
+                amor_series.extend(iters.iter_mut().map(|i| i.next().unwrap()));
+
+                let group_by = &self.amor_series[..self.group_by.len()];
+                let order_by = self.order_by.as_ref().map(|(_, o)| (&self.amor_series[self.group_by.len()], o));
+                let phys_function = &self.amor_series[self.group_by.len() + usize::from(self.order_by.is_some())];
+
+                self.evaluate_on(group_by, order_by, phys_function)
+            }).collect_ca_with_dtype::<ListChunked>(self.output_field.name().clone(), self.output_field.dtype().clone());
+
+        AggregationContext {
+            state: AggState::AggregatedList(out.into_column()),
+            groups: groups,
+            update_groups: UpdateGroups::WithSeriesLen,
+            original_len: false,
+        }
     }
 
     fn as_expression(&self) -> Option<&Expr> {
