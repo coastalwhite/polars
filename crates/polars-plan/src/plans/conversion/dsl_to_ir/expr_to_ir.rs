@@ -420,16 +420,6 @@ pub(super) fn to_aexpr_impl(
             let expr_dtype = ctx.arena.get(expr).to_dtype(&ctx.to_field_ctx())?;
             let element_dtype = variant.element_dtype(&expr_dtype)?;
 
-            // Perform this before schema resolution so that we can better error messages.
-            for e in evaluation.as_ref().into_iter() {
-                if matches!(e, Expr::Column(_)) {
-                    polars_bail!(
-                        ComputeError:
-                        "named columns are not allowed in `eval` functions; consider using `element`"
-                    );
-                }
-            }
-
             let mut evaluation_schema = ctx.schema.clone();
             evaluation_schema.insert(PL_ELEMENT_NAME.clone(), element_dtype.clone());
             let mut evaluation_ctx = ExprToIRContext {
@@ -443,6 +433,16 @@ pub(super) fn to_aexpr_impl(
                 check_column_names: ctx.check_column_names,
             };
             let (evaluation, _) = to_aexpr_impl(owned(evaluation), &mut evaluation_ctx)?;
+
+            let uses_non_element_columns = ctx
+                .arena
+                .iter(evaluation)
+                .find(|(_, e)| matches!(e, AExpr::Column(n) if !n.is_empty()))
+                .is_some();
+
+            if uses_non_element_columns && !is_length_preserving_with_ctx_ae(expr, ctx.arena, ctx.etctx) {
+                polars_bail!(InvalidOperation: "`eval` operations which reference external columns need to have a length_preserving input");
+            }
 
             match variant {
                 EvalVariant::List | EvalVariant::ListAgg => {},

@@ -471,6 +471,13 @@ impl GroupsType {
         }
     }
 
+    pub fn total_num_elements(&self) -> usize {
+        match self {
+            GroupsType::Idx(groups) => groups.iter().map(|(_, i)| i.len()).sum(),
+            GroupsType::Slice { groups, .. } => groups.iter().map(|[_, i]| *i as usize).sum(),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

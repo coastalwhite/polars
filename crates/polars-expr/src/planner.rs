@@ -533,6 +533,10 @@ fn create_physical_expr_inner(
             evaluation,
             variant,
         } => {
+            let non_element_columns = aexpr_to_leaf_names_iter(*evaluation, expr_arena)
+                .filter(|n| !n.is_empty())
+                .collect();
+
             let mut evaluation_state = state.with_listarr_eval();
             let is_scalar =
                 is_scalar_with_ctx_ae(expression, expr_arena, &state.expr_traversal_ctx());
@@ -583,6 +587,7 @@ fn create_physical_expr_inner(
                 evaluation_is_scalar,
                 evaluation_is_elementwise,
                 evaluation_is_fallible,
+                non_element_columns,
             )))
         },
         Function {

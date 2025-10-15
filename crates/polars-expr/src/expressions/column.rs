@@ -141,6 +141,23 @@ impl PhysicalExpr for ColumnExpr {
         groups: &'a GroupPositions,
         state: &ExecutionState,
     ) -> PolarsResult<AggregationContext<'a>> {
+        dbg!(&state.ext_named_groups);
+        if let Some(state) = state.ext_named_groups.get(&self.name) {
+            match state {
+                AggState::LiteralScalar(c) => assert_eq!(c.len(), 1),
+                AggState::AggregatedScalar(c) => assert_eq!(c.len(), groups.len()),
+                AggState::AggregatedList(c) => assert_eq!(c.len(), groups.len()),
+                AggState::NotAggregated(_) => {},
+            }
+
+            return Ok(AggregationContext {
+                state: state.clone(),
+                groups: Cow::Borrowed(groups),
+                update_groups: UpdateGroups::No,
+                original_len: false,
+            });
+        }
+
         let c = self.evaluate(df, state)?;
         Ok(AggregationContext::new(c, Cow::Borrowed(groups), false))
     }
