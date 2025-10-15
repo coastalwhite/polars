@@ -99,6 +99,7 @@ pub struct ExpressionConversionState {
     // expressions
     pub allow_threading: bool,
     pub has_windows: bool,
+    pub in_listarr_eval: bool,
     // settings per expression
     // those are reset every expression
     local: LocalConversionState,
@@ -116,9 +117,22 @@ impl ExpressionConversionState {
         Self {
             allow_threading,
             has_windows: false,
+            in_listarr_eval: false,
             local: LocalConversionState {
                 ..Default::default()
             },
+        }
+    }
+
+    pub fn with_listarr_eval(&self) -> Self {
+        let mut v = self.clone();
+        v.in_listarr_eval = true;
+        v
+    }
+
+    pub fn expr_traversal_ctx(&self) -> ExprTraversalContext {
+        ExprTraversalContext {
+            columns_are_scalars: self.in_listarr_eval,
         }
     }
 
@@ -166,6 +180,12 @@ fn create_physical_expr_inner(
 ) -> PolarsResult<Arc<dyn PhysicalExpr>> {
     use AExpr::*;
 
+    let etctx = state.expr_traversal_ctx();
+
+    macro_rules! to_field_ctx {
+        () => {{ ToFieldContext::new(expr_arena, schema).with_traversal_ctx(&etctx) }};
+    }
+
     match expr_arena.get(expression) {
         Len => Ok(Arc::new(phys_expr::CountExpr::new())),
         aexpr @ Window {
@@ -174,7 +194,7 @@ fn create_physical_expr_inner(
             order_by,
             options,
         } => {
-            let output_field = aexpr.to_field(&ToFieldContext::new(expr_arena, schema))?;
+            let output_field = aexpr.to_field(&to_field_ctx!())?;
             let function = *function;
             state.set_window();
             let phys_function =
@@ -282,10 +302,8 @@ fn create_physical_expr_inner(
             )))
         },
         BinaryExpr { left, op, right } => {
-            let output_field = expr_arena
-                .get(expression)
-                .to_field(&ToFieldContext::new(expr_arena, schema))?;
-            let is_scalar = is_scalar_ae(expression, expr_arena);
+            let output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
+            let is_scalar = is_scalar_with_ctx_ae(expression, expr_arena, &etctx);
             let lhs = create_physical_expr_inner(*left, ctxt, expr_arena, schema, state)?;
             let rhs = create_physical_expr_inner(*right, ctxt, expr_arena, schema, state)?;
             Ok(Arc::new(phys_expr::BinaryExpr::new(
@@ -366,9 +384,7 @@ fn create_physical_expr_inner(
                 Context::Default if !matches!(agg, IRAggExpr::Quantile { .. }) => {
                     use {GroupByMethod as GBM, IRAggExpr as I};
 
-                    let output_field = expr_arena
-                        .get(expression)
-                        .to_field(&ToFieldContext::new(expr_arena, schema))?;
+                    let output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
                     let groupby = match agg {
                         I::Min { propagate_nans, .. } if *propagate_nans => GBM::NanMin,
                         I::Min { .. } => GBM::Min,
@@ -418,11 +434,14 @@ fn create_physical_expr_inner(
                         return Ok(Arc::new(AggQuantileExpr::new(input, quantile, *interpol)));
                     }
 
-                    let mut output_field = expr_arena
-                        .get(expression)
-                        .to_field(&ToFieldContext::new(expr_arena, schema))?;
+                    let mut output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
 
-                    if matches!(ctxt, Context::Aggregation) && !is_scalar_ae(expression, expr_arena)
+                    if matches!(ctxt, Context::Aggregation)
+                        && !is_scalar_with_ctx_ae(
+                            expression,
+                            expr_arena,
+                            &state.expr_traversal_ctx(),
+                        )
                     {
                         output_field.coerce(output_field.dtype.clone().implode());
                     }
@@ -458,7 +477,8 @@ fn create_physical_expr_inner(
             truthy,
             falsy,
         } => {
-            let is_scalar = is_scalar_ae(expression, expr_arena);
+            let is_scalar =
+                is_scalar_with_ctx_ae(expression, expr_arena, &state.expr_traversal_ctx());
             let mut lit_count = 0u8;
             state.reset();
             let predicate =
@@ -485,10 +505,9 @@ fn create_physical_expr_inner(
             options,
             fmt_str: _,
         } => {
-            let is_scalar = is_scalar_ae(expression, expr_arena);
-            let output_field = expr_arena
-                .get(expression)
-                .to_field(&ToFieldContext::new(expr_arena, schema))?;
+            let is_scalar =
+                is_scalar_with_ctx_ae(expression, expr_arena, &state.expr_traversal_ctx());
+            let output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
 
             let input =
                 create_physical_expressions_from_irs(input, ctxt, expr_arena, schema, state)?;
@@ -514,20 +533,22 @@ fn create_physical_expr_inner(
             evaluation,
             variant,
         } => {
-            let is_scalar = is_scalar_ae(expression, expr_arena);
-            let evaluation_is_scalar = is_scalar_ae(*evaluation, expr_arena);
+            let mut evaluation_state = state.with_listarr_eval();
+            let is_scalar =
+                is_scalar_with_ctx_ae(expression, expr_arena, &state.expr_traversal_ctx());
+            let evaluation_is_scalar = is_scalar_with_ctx_ae(
+                *evaluation,
+                expr_arena,
+                &evaluation_state.expr_traversal_ctx(),
+            );
             let evaluation_is_elementwise = is_elementwise_rec(*evaluation, expr_arena);
             // @NOTE: This is actually also something the downstream apply code should care about.
             let mut pd_group = ExprPushdownGroup::Pushable;
             pd_group.update_with_expr_rec(expr_arena.get(*evaluation), expr_arena, None);
             let evaluation_is_fallible = matches!(pd_group, ExprPushdownGroup::Fallible);
 
-            let output_field = expr_arena
-                .get(expression)
-                .to_field(&ToFieldContext::new(expr_arena, schema))?;
-            let input_field = expr_arena
-                .get(*expr)
-                .to_field(&ToFieldContext::new(expr_arena, schema))?;
+            let output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
+            let input_field = expr_arena.get(*expr).to_field(&to_field_ctx!())?;
             let expr =
                 create_physical_expr_inner(*expr, Context::Default, expr_arena, schema, state)?;
 
@@ -549,7 +570,7 @@ fn create_physical_expr_inner(
                 },
                 expr_arena,
                 &Arc::new(eval_schema),
-                state,
+                &mut evaluation_state,
             )?;
 
             Ok(Arc::new(EvalExpr::new(
@@ -569,10 +590,14 @@ fn create_physical_expr_inner(
             function,
             options,
         } => {
-            let is_scalar = is_scalar_ae(expression, expr_arena);
-            let output_field = expr_arena
-                .get(expression)
-                .to_field(&ToFieldContext::new(expr_arena, schema))?;
+            let is_scalar = is_scalar_with_ctx_ae(
+                expression,
+                expr_arena,
+                &ExprTraversalContext {
+                    columns_are_scalars: state.in_listarr_eval,
+                },
+            );
+            let output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
             let input =
                 create_physical_expressions_from_irs(input, ctxt, expr_arena, schema, state)?;
             let is_fallible = expr_arena.get(expression).is_fallible_top_level(expr_arena);
@@ -614,9 +639,7 @@ fn create_physical_expr_inner(
                 move |c: &mut [polars_core::frame::column::Column]| c[0].explode(skip_empty),
             ) as Arc<dyn ColumnsUdf>);
 
-            let output_field = expr_arena
-                .get(expression)
-                .to_field(&ToFieldContext::new(expr_arena, schema))?;
+            let output_field = expr_arena.get(expression).to_field(&to_field_ctx!())?;
 
             Ok(Arc::new(ApplyExpr::new(
                 vec![input],

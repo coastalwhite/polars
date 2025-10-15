@@ -21,7 +21,9 @@ use polars_core::chunked_array::cast::CastOptions;
 use polars_core::prelude::*;
 use polars_core::utils::{get_time_units, try_get_supertype};
 use polars_utils::arena::{Arena, Node};
-pub use scalar::{is_length_preserving_ae, is_scalar_ae};
+pub use scalar::{
+    is_length_preserving_ae, is_length_preserving_with_ctx_ae, is_scalar_ae, is_scalar_with_ctx_ae,
+};
 use strum_macros::IntoStaticStr;
 pub use traverse::*;
 mod properties;
@@ -252,14 +254,48 @@ pub enum AExpr {
     Len,
 }
 
+pub struct ExprTraversalContext {
+    pub columns_are_scalars: bool,
+}
+
+impl Default for ExprTraversalContext {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl ExprTraversalContext {
+    pub const DEFAULT: ExprTraversalContext = Self {
+        columns_are_scalars: false,
+    };
+}
+
 impl AExpr {
     #[cfg(feature = "cse")]
     pub(crate) fn col(name: PlSmallStr) -> Self {
         AExpr::Column(name)
     }
 
-    #[recursive::recursive]
     pub fn is_scalar(&self, arena: &Arena<AExpr>) -> bool {
+        self.is_scalar_with_ctx(
+            arena,
+            &ExprTraversalContext {
+                columns_are_scalars: false,
+            },
+        )
+    }
+
+    pub fn is_length_preserving(&self, arena: &Arena<AExpr>) -> bool {
+        self.is_length_preserving_with_ctx(
+            arena,
+            &ExprTraversalContext {
+                columns_are_scalars: false,
+            },
+        )
+    }
+
+    #[recursive::recursive]
+    pub fn is_scalar_with_ctx(&self, arena: &Arena<AExpr>, ctx: &ExprTraversalContext) -> bool {
         match self {
             AExpr::Element => false,
             AExpr::Literal(lv) => lv.is_scalar(),
@@ -270,44 +306,48 @@ impl AExpr {
                 } else if options.is_elementwise()
                     || options.flags.contains(FunctionFlags::LENGTH_PRESERVING)
                 {
-                    input.iter().all(|e| e.is_scalar(arena))
+                    input.iter().all(|e| e.is_scalar_with_ctx(arena, ctx))
                 } else {
                     false
                 }
             },
             AExpr::BinaryExpr { left, right, .. } => {
-                is_scalar_ae(*left, arena) && is_scalar_ae(*right, arena)
+                is_scalar_with_ctx_ae(*left, arena, ctx)
+                    && is_scalar_with_ctx_ae(*right, arena, ctx)
             },
             AExpr::Ternary {
                 predicate,
                 truthy,
                 falsy,
             } => {
-                is_scalar_ae(*predicate, arena)
-                    && is_scalar_ae(*truthy, arena)
-                    && is_scalar_ae(*falsy, arena)
+                is_scalar_with_ctx_ae(*predicate, arena, ctx)
+                    && is_scalar_with_ctx_ae(*truthy, arena, ctx)
+                    && is_scalar_with_ctx_ae(*falsy, arena, ctx)
             },
             AExpr::Agg(_) | AExpr::Len => true,
-            AExpr::Cast { expr, .. } => is_scalar_ae(*expr, arena),
+            AExpr::Cast { expr, .. } => is_scalar_with_ctx_ae(*expr, arena, ctx),
             AExpr::Eval { expr, variant, .. } => {
-                variant.is_length_preserving() && is_scalar_ae(*expr, arena)
+                variant.is_length_preserving() && is_scalar_with_ctx_ae(*expr, arena, ctx)
             },
-            AExpr::Sort { expr, .. } => is_scalar_ae(*expr, arena),
+            AExpr::Sort { expr, .. } => is_scalar_with_ctx_ae(*expr, arena, ctx),
             AExpr::Gather { returns_scalar, .. } => *returns_scalar,
-            AExpr::SortBy { expr, .. } => is_scalar_ae(*expr, arena),
-            AExpr::Window { function, .. } => is_scalar_ae(*function, arena),
-            AExpr::Explode { .. }
-            | AExpr::Column(_)
-            | AExpr::Filter { .. }
-            | AExpr::Slice { .. } => false,
+            AExpr::SortBy { expr, .. } => is_scalar_with_ctx_ae(*expr, arena, ctx),
+            AExpr::Window { function, .. } => is_scalar_with_ctx_ae(*function, arena, ctx),
+            AExpr::Column(_) => ctx.columns_are_scalars,
+            AExpr::Explode { .. } | AExpr::Filter { .. } | AExpr::Slice { .. } => false,
         }
     }
 
     #[recursive::recursive]
-    pub fn is_length_preserving(&self, arena: &Arena<AExpr>) -> bool {
+    pub fn is_length_preserving_with_ctx(
+        &self,
+        arena: &Arena<AExpr>,
+        ctx: &ExprTraversalContext,
+    ) -> bool {
         fn broadcasting_input_length_preserving(
             n: impl IntoIterator<Item = Node>,
             arena: &Arena<AExpr>,
+            ctx: &ExprTraversalContext,
         ) -> bool {
             let mut num_items = 0;
             let mut num_length_preserving = 0;
@@ -316,10 +356,10 @@ impl AExpr {
             for n in n {
                 num_items += 1;
 
-                if is_length_preserving_ae(n, arena) {
+                if is_length_preserving_with_ctx_ae(n, arena, ctx) {
                     num_length_preserving += 1;
                     num_scalar_or_length_preserving += 1;
-                } else if is_scalar_ae(n, arena) {
+                } else if is_scalar_with_ctx_ae(n, arena, ctx) {
                     num_scalar_or_length_preserving += 1;
                 }
             }
@@ -329,42 +369,48 @@ impl AExpr {
 
         match self {
             AExpr::Element => true,
-            AExpr::Column(_) => true,
+            AExpr::Column(_) => !ctx.columns_are_scalars,
 
             AExpr::Literal(_) | AExpr::Agg(_) | AExpr::Len => false,
             AExpr::Function { options, input, .. }
             | AExpr::AnonymousFunction { options, input, .. } => {
                 if options.flags.is_elementwise() {
-                    broadcasting_input_length_preserving(input.iter().map(|e| e.node()), arena)
+                    broadcasting_input_length_preserving(input.iter().map(|e| e.node()), arena, ctx)
                 } else if options.flags.is_length_preserving() {
-                    input.iter().all(|e| e.is_length_preserving(arena))
+                    input
+                        .iter()
+                        .all(|e| e.is_length_preserving_with_ctx(arena, ctx))
                 } else {
                     false
                 }
             },
             AExpr::BinaryExpr { left, right, .. } => {
-                broadcasting_input_length_preserving([*left, *right], arena)
+                broadcasting_input_length_preserving([*left, *right], arena, ctx)
             },
             AExpr::Ternary {
                 predicate,
                 truthy,
                 falsy,
-            } => broadcasting_input_length_preserving([*predicate, *truthy, *falsy], arena),
-            AExpr::Cast { expr, .. } => is_length_preserving_ae(*expr, arena),
+            } => broadcasting_input_length_preserving([*predicate, *truthy, *falsy], arena, ctx),
+            AExpr::Cast { expr, .. } => is_length_preserving_with_ctx_ae(*expr, arena, ctx),
             AExpr::Eval { expr, variant, .. } => {
-                variant.is_length_preserving() && is_length_preserving_ae(*expr, arena)
+                variant.is_length_preserving()
+                    && is_length_preserving_with_ctx_ae(*expr, arena, ctx)
             },
-            AExpr::Sort { expr, .. } => is_length_preserving_ae(*expr, arena),
+            AExpr::Sort { expr, .. } => is_length_preserving_with_ctx_ae(*expr, arena, ctx),
             AExpr::Gather {
                 expr: _,
                 idx,
                 returns_scalar,
-            } => !returns_scalar && is_length_preserving_ae(*idx, arena),
+            } => !returns_scalar && is_length_preserving_with_ctx_ae(*idx, arena, ctx),
             AExpr::SortBy { expr, by, .. } => broadcasting_input_length_preserving(
                 std::iter::once(*expr).chain(by.iter().copied()),
                 arena,
+                ctx,
             ),
-            AExpr::Window { function, .. } => is_length_preserving_ae(*function, arena),
+            AExpr::Window { function, .. } => {
+                is_length_preserving_with_ctx_ae(*function, arena, ctx)
+            },
 
             AExpr::Explode { .. } | AExpr::Filter { .. } | AExpr::Slice { .. } => false,
         }

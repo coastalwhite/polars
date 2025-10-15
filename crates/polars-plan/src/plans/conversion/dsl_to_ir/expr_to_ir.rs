@@ -51,6 +51,7 @@ pub struct ExprToIRContext<'a> {
     pub(super) with_fields: Option<(Node, Schema)>,
     pub arena: &'a mut Arena<AExpr>,
     pub schema: &'a Schema,
+    pub etctx: &'a ExprTraversalContext,
 
     pub allow_unknown: bool,
     /// Check whether mentioned column names exist in the schema.
@@ -63,6 +64,7 @@ impl<'a> ExprToIRContext<'a> {
             with_fields: None,
             arena,
             schema,
+            etctx: &ExprTraversalContext::DEFAULT,
             allow_unknown: false,
             check_column_names: true,
         }
@@ -86,7 +88,7 @@ impl<'a> ExprToIRContext<'a> {
     }
 
     pub fn to_field_ctx<'b>(&'b self) -> ToFieldContext<'b> {
-        ToFieldContext::new(self.arena, self.schema)
+        ToFieldContext::new(self.arena, self.schema).with_traversal_ctx(self.etctx)
     }
 }
 
@@ -341,7 +343,7 @@ pub(super) fn to_aexpr_impl(
 
             let fields = input
                 .iter()
-                .map(|e| e.field(ctx.schema, ctx.arena))
+                .map(|e| e.field_with_ctx(ctx.to_field_ctx()))
                 .collect::<PolarsResult<Vec<_>>>()?;
 
             let function = function.materialize()?;
@@ -434,6 +436,9 @@ pub(super) fn to_aexpr_impl(
                 with_fields: None,
                 schema: &evaluation_schema,
                 arena: ctx.arena,
+                etctx: &ExprTraversalContext {
+                    columns_are_scalars: variant.turns_columns_into_scalars(),
+                },
                 allow_unknown: ctx.allow_unknown,
                 check_column_names: ctx.check_column_names,
             };
@@ -443,14 +448,14 @@ pub(super) fn to_aexpr_impl(
                 EvalVariant::List | EvalVariant::ListAgg => {},
                 EvalVariant::Array { as_list } => {
                     polars_ensure!(
-                        as_list || is_length_preserving_ae(evaluation, ctx.arena),
+                        as_list || is_length_preserving_with_ctx_ae(evaluation, ctx.arena, ctx.etctx),
                         InvalidOperation: "`array.eval` is not allowed with non-length preserving expressions. Enable `as_list` if you want to output a variable amount of items per row."
                     )
                 },
                 EvalVariant::ArrayAgg => {},
                 EvalVariant::Cumulative { .. } => {
                     polars_ensure!(
-                        is_scalar_ae(evaluation, ctx.arena),
+                        is_scalar_with_ctx_ae(evaluation, ctx.arena, ctx.etctx),
                         InvalidOperation: "`cumulative_eval` is not allowed with non-scalar output"
                     )
                 },

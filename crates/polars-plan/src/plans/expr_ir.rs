@@ -267,21 +267,43 @@ impl ExprIR {
         is_length_preserving_ae(self.node, expr_arena)
     }
 
+    pub fn is_scalar_with_ctx(
+        &self,
+        expr_arena: &Arena<AExpr>,
+        ctx: &ExprTraversalContext,
+    ) -> bool {
+        is_scalar_with_ctx_ae(self.node, expr_arena, ctx)
+    }
+
+    pub fn is_length_preserving_with_ctx(
+        &self,
+        expr_arena: &Arena<AExpr>,
+        ctx: &ExprTraversalContext,
+    ) -> bool {
+        is_length_preserving_with_ctx_ae(self.node, expr_arena, ctx)
+    }
+
     pub fn dtype(&self, schema: &Schema, expr_arena: &Arena<AExpr>) -> PolarsResult<&DataType> {
+        self.dtype_with_ctx(ToFieldContext::new(expr_arena, schema))
+    }
+
+    pub fn field(&self, schema: &Schema, expr_arena: &Arena<AExpr>) -> PolarsResult<Field> {
+        self.field_with_ctx(ToFieldContext::new(expr_arena, schema))
+    }
+
+    pub fn dtype_with_ctx(&self, ctx: ToFieldContext) -> PolarsResult<&DataType> {
         match self.output_dtype.get() {
             Some(dtype) => Ok(dtype),
             None => {
-                let dtype = expr_arena
-                    .get(self.node)
-                    .to_dtype(&ToFieldContext::new(expr_arena, schema))?;
+                let dtype = ctx.arena.get(self.node).to_dtype(&ctx)?;
                 let _ = self.output_dtype.set(dtype);
                 Ok(self.output_dtype.get().unwrap())
             },
         }
     }
 
-    pub fn field(&self, schema: &Schema, expr_arena: &Arena<AExpr>) -> PolarsResult<Field> {
-        let dtype = self.dtype(schema, expr_arena)?;
+    pub fn field_with_ctx(&self, ctx: ToFieldContext) -> PolarsResult<Field> {
+        let dtype = self.dtype_with_ctx(ctx)?;
         let name = self.output_name();
         Ok(Field::new(name.clone(), dtype.clone()))
     }

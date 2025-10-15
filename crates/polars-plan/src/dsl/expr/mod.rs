@@ -572,6 +572,13 @@ impl EvalVariant {
         }
     }
 
+    pub fn turns_columns_into_scalars(&self) -> bool {
+        match self {
+            Self::List | Self::ListAgg | Self::Array { .. } | Self::ArrayAgg => true,
+            Self::Cumulative { min_samples: _ } => false,
+        }
+    }
+
     /// Get the `DataType` of the `pl.element()` value.
     pub fn element_dtype<'a>(&self, dtype: &'a DataType) -> PolarsResult<&'a DataType> {
         match (self, dtype) {

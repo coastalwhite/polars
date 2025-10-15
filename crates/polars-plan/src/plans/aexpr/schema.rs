@@ -11,13 +11,23 @@ fn validate_expr(node: Node, ctx: &ToFieldContext) -> PolarsResult<()> {
 }
 
 pub struct ToFieldContext<'a> {
-    arena: &'a Arena<AExpr>,
-    schema: &'a Schema,
+    pub arena: &'a Arena<AExpr>,
+    pub schema: &'a Schema,
+    pub traversal: &'a ExprTraversalContext,
 }
 
 impl<'a> ToFieldContext<'a> {
     pub fn new(arena: &'a Arena<AExpr>, schema: &'a Schema) -> Self {
-        Self { arena, schema }
+        Self {
+            arena,
+            schema,
+            traversal: &ExprTraversalContext::DEFAULT,
+        }
+    }
+
+    pub fn with_traversal_ctx(mut self, traversal: &'a ExprTraversalContext) -> Self {
+        self.traversal = traversal;
+        self
     }
 }
 
@@ -71,7 +81,7 @@ impl AExpr {
                     implicit_implode |= matches!(options, WindowType::Rolling(_));
                 }
 
-                if implicit_implode && !is_scalar_ae(*function, ctx.arena) {
+                if implicit_implode && !is_scalar_with_ctx_ae(*function, ctx.arena, ctx.traversal) {
                     field.dtype = field.dtype.implode();
                 }
 
@@ -260,8 +270,16 @@ impl AExpr {
                     .arena
                     .get(*evaluation)
                     .to_field_impl(&ToFieldContext::new(ctx.arena, &evaluation_schema))?;
+                let ctx = ToFieldContext {
+                    arena: ctx.arena,
+                    schema: &schema,
+                    traversal: &ExprTraversalContext {
+                        columns_are_scalars: variant.turns_columns_into_scalars(),
+                    },
+                };
+                let mut output_field = ctx.arena.get(*evaluation).to_field_impl(&ctx)?;
                 output_field.dtype = output_field.dtype.materialize_unknown(false)?;
-                let eval_is_scalar = is_scalar_ae(*evaluation, ctx.arena);
+                let eval_is_scalar = is_scalar_with_ctx_ae(*evaluation, ctx.arena, ctx.traversal);
 
                 output_field.dtype =
                     variant.output_dtype(field.dtype(), output_field.dtype, eval_is_scalar)?;
