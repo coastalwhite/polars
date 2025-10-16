@@ -272,7 +272,7 @@ impl AExpr {
                     .to_field_impl(&ToFieldContext::new(ctx.arena, &evaluation_schema))?;
                 let ctx = ToFieldContext {
                     arena: ctx.arena,
-                    schema: &schema,
+                    schema: &evaluation_schema,
                     traversal: &ExprTraversalContext {
                         columns_are_scalars: variant.turns_columns_into_scalars(),
                     },

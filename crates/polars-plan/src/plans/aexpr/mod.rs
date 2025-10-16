@@ -22,7 +22,8 @@ use polars_core::prelude::*;
 use polars_core::utils::{get_time_units, try_get_supertype};
 use polars_utils::arena::{Arena, Node};
 pub use scalar::{
-    is_length_preserving_ae, is_length_preserving_with_ctx_ae, is_scalar_ae, is_scalar_with_ctx_ae,
+    is_elementwise_ae, is_elementwise_with_ctx_ae, is_length_preserving_ae,
+    is_length_preserving_with_ctx_ae, is_scalar_ae, is_scalar_with_ctx_ae,
 };
 use strum_macros::IntoStaticStr;
 pub use traverse::*;
@@ -413,6 +414,69 @@ impl AExpr {
             },
 
             AExpr::Explode { .. } | AExpr::Filter { .. } | AExpr::Slice { .. } => false,
+        }
+    }
+
+    #[recursive::recursive]
+    pub fn is_elementwise_with_ctx(
+        &self,
+        arena: &Arena<AExpr>,
+        ctx: &ExprTraversalContext,
+    ) -> bool {
+        fn broadcasting_input_elementwise(
+            n: impl IntoIterator<Item = Node>,
+            arena: &Arena<AExpr>,
+            ctx: &ExprTraversalContext,
+        ) -> bool {
+            let mut num_items = 0;
+            let mut num_elementwise = 0;
+            let mut num_scalar_or_elementwise = 0;
+
+            for n in n {
+                num_items += 1;
+
+                if is_elementwise_with_ctx_ae(n, arena, ctx) {
+                    num_elementwise += 1;
+                    num_scalar_or_elementwise += 1;
+                } else if is_scalar_with_ctx_ae(n, arena, ctx) {
+                    num_scalar_or_elementwise += 1;
+                }
+            }
+
+            num_elementwise > 0 && num_scalar_or_elementwise == num_items
+        }
+
+        match self {
+            AExpr::Column(_) => !ctx.columns_are_scalars,
+
+            AExpr::Function { options, input, .. }
+            | AExpr::AnonymousFunction { options, input, .. } => {
+                options.flags.is_elementwise()
+                    && broadcasting_input_elementwise(input.iter().map(|e| e.node()), arena, ctx)
+            },
+            AExpr::BinaryExpr { left, right, .. } => {
+                broadcasting_input_elementwise([*left, *right], arena, ctx)
+            },
+            AExpr::Ternary {
+                predicate,
+                truthy,
+                falsy,
+            } => broadcasting_input_elementwise([*predicate, *truthy, *falsy], arena, ctx),
+            AExpr::Cast { expr, .. } => is_elementwise_with_ctx_ae(*expr, arena, ctx),
+            AExpr::Eval { expr, variant, .. } => {
+                variant.is_elementwise() && is_elementwise_with_ctx_ae(*expr, arena, ctx)
+            },
+
+            AExpr::Sort { .. }
+            | AExpr::Gather { .. }
+            | AExpr::SortBy { .. }
+            | AExpr::Literal(_)
+            | AExpr::Agg(_)
+            | AExpr::Len
+            | AExpr::Window { .. }
+            | AExpr::Explode { .. }
+            | AExpr::Filter { .. }
+            | AExpr::Slice { .. } => false,
         }
     }
 

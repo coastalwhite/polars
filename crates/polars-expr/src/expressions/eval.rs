@@ -3,7 +3,7 @@ use std::cell::LazyCell;
 use std::sync::Arc;
 
 use arrow::bitmap::{Bitmap, BitmapBuilder};
-use polars_core::chunked_array::builder::{AnonymousOwnedListBuilder, get_list_builder};
+use polars_core::chunked_array::builder::AnonymousOwnedListBuilder;
 use polars_core::error::{PolarsResult, feature_gated};
 use polars_core::frame::DataFrame;
 #[cfg(feature = "dtype-array")]
@@ -20,7 +20,7 @@ use polars_utils::IdxSize;
 use polars_utils::pl_str::PlSmallStr;
 
 use super::{AggregationContext, PhysicalExpr};
-use crate::prelude::{AggState, UpdateGroups};
+use crate::prelude::AggState;
 use crate::state::ExecutionState;
 
 #[derive(Clone)]

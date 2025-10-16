@@ -440,8 +440,8 @@ pub(super) fn to_aexpr_impl(
                 .find(|(_, e)| matches!(e, AExpr::Column(n) if !n.is_empty()))
                 .is_some();
 
-            if uses_non_element_columns && !is_length_preserving_with_ctx_ae(expr, ctx.arena, ctx.etctx) {
-                polars_bail!(InvalidOperation: "`eval` operations which reference external columns need to have a length_preserving input");
+            if uses_non_element_columns && !is_elementwise_with_ctx_ae(expr, ctx.arena, ctx.etctx) {
+                polars_bail!(InvalidOperation: "`eval` operations which reference external columns need to have an element-wise input");
             }
 
             match variant {

@@ -141,7 +141,6 @@ impl PhysicalExpr for ColumnExpr {
         groups: &'a GroupPositions,
         state: &ExecutionState,
     ) -> PolarsResult<AggregationContext<'a>> {
-        dbg!(&state.ext_named_groups);
         if let Some(state) = state.ext_named_groups.get(&self.name) {
             match state {
                 AggState::LiteralScalar(c) => assert_eq!(c.len(), 1),
