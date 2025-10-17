@@ -266,10 +266,6 @@ impl AExpr {
                 let element_dtype = variant.element_dtype(field.dtype())?;
                 let mut evaluation_schema = ctx.schema.clone();
                 evaluation_schema.insert(PL_ELEMENT_NAME.clone(), element_dtype.clone());
-                let mut output_field = ctx
-                    .arena
-                    .get(*evaluation)
-                    .to_field_impl(&ToFieldContext::new(ctx.arena, &evaluation_schema))?;
                 let ctx = ToFieldContext {
                     arena: ctx.arena,
                     schema: &evaluation_schema,

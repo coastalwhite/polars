@@ -68,22 +68,25 @@ impl EvalExpr {
     fn prepare_state_for_listarr_eval<'a>(
         &self,
         df: &DataFrame,
+        values: Column,
         state: &'a ExecutionState,
         validity: Option<&Bitmap>,
-    ) -> Cow<'a, ExecutionState> {
+    ) -> (DataFrame, Cow<'a, ExecutionState>) {
         let mut state = Cow::Borrowed(state);
         if !self.non_element_columns.is_empty() {
-            let validity =
-                validity.map(|v| BooleanChunked::from_bitmap(PlSmallStr::EMPTY, v.clone()));
-            state.to_mut().ext_named_groups = Arc::new(PlHashMap::from_iter(
-                self.non_element_columns.iter().map(|c| {
-                    let mut values = df.column(c).unwrap().clone();
-                    if let Some(validity) = validity.as_ref() {
-                        values = values.filter(validity).unwrap();
-                    }
-                    (c.clone(), AggState::AggregatedScalar(values))
-                }),
-            ));
+            todo!()
+            // let df = df.select_columns(&self.)
+            // let validity =
+            //     validity.map(|v| BooleanChunked::from_bitmap(PlSmallStr::EMPTY, v.clone()));
+            // state.to_mut().ext_element_column = Some(values);
+            //     self.non_element_columns.iter().map(|c| {
+            //         let mut values = df.column(c).unwrap().clone();
+            //         if let Some(validity) = validity.as_ref() {
+            //             values = values.filter(validity).unwrap();
+            //         }
+            //         (c.clone(), AggState::AggregatedScalar(values))
+            //     }),
+            // ));
         }
         state
     }
@@ -155,10 +158,22 @@ impl EvalExpr {
         };
         let groups = Cow::Owned(groups.into_sliceable());
 
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
+        let mut ac = self.evaluation.evaluate_on_groups(&df, &groups, state)?;
+=======
+        dbg!(&df);
+        dbg!(&ext_df);
+>>>>>>> Stashed changes
         let state = self.prepare_state_for_listarr_eval(ext_df, state, validity.as_ref());
         let mut ac = self
             .evaluation
             .evaluate_on_groups(&df, &groups, state.as_ref())?;
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 
         ac.groups(); // Update the groups.
 
@@ -484,6 +499,11 @@ impl PhysicalExpr for EvalExpr {
         state: &ExecutionState,
     ) -> PolarsResult<AggregationContext<'a>> {
         let mut input = self.input.evaluate_on_groups(df, groups, state)?;
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
         let mut df = Cow::Borrowed(df);
         if self.non_element_columns.is_empty() {
             dbg!("todo! normalize_values");
@@ -502,8 +522,15 @@ impl PhysicalExpr for EvalExpr {
                     .for_each(|[start, length]| idxs.extend(*start..*start + *length)),
             }
             df = Cow::Owned(unsafe { non_element_df.take_slice_unchecked(&idxs) });
+<<<<<<< Updated upstream
         }
 
+=======
+            dbg!(&df);
+        }
+
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
         match self.variant {
             EvalVariant::List => {
                 let out = self.evaluate_on_list_chunked(

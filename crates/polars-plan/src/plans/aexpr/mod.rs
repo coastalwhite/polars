@@ -447,6 +447,7 @@ impl AExpr {
         }
 
         match self {
+            AExpr::Element => true,
             AExpr::Column(_) => !ctx.columns_are_scalars,
 
             AExpr::Function { options, input, .. }
