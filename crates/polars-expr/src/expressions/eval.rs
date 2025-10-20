@@ -21,7 +21,7 @@ use polars_utils::pl_str::PlSmallStr;
 
 use super::{AggregationContext, PhysicalExpr};
 use crate::prelude::AggState;
-use crate::state::ExecutionState;
+use crate::state::{ExecutionElementContext, ExecutionState};
 
 #[derive(Clone)]
 pub struct EvalExpr {
@@ -98,11 +98,6 @@ impl EvalExpr {
         state: &ExecutionState,
         is_agg: bool,
     ) -> PolarsResult<Column> {
-        let df = ca
-            .get_inner()
-            .with_name(PL_ELEMENT_NAME.clone())
-            .into_frame();
-
         // Fast path: Empty or only nulls.
         if ca.null_count() == ca.len() {
             let name = self.output_field.name.clone();
@@ -117,6 +112,11 @@ impl EvalExpr {
             && self.non_element_columns.is_empty()
             && !may_fail_on_masked_out_elements
         {
+            let df = ca
+                .get_inner()
+                .with_name(PL_ELEMENT_NAME.clone())
+                .into_frame();
+
             let mut column = self.evaluation.evaluate(&df, state)?;
 
             // Since `lit` is marked as elementwise, this may lead to problems.
@@ -158,22 +158,12 @@ impl EvalExpr {
         };
         let groups = Cow::Owned(groups.into_sliceable());
 
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-        let mut ac = self.evaluation.evaluate_on_groups(&df, &groups, state)?;
-=======
-        dbg!(&df);
-        dbg!(&ext_df);
->>>>>>> Stashed changes
-        let state = self.prepare_state_for_listarr_eval(ext_df, state, validity.as_ref());
+        let mut state = state.clone();
+        state.element_context = ExecutionElementContext::ListEval;
+        let df = self.prepare_df_for_listarr_eval(ext_df, state, validity.as_ref());
         let mut ac = self
             .evaluation
-            .evaluate_on_groups(&df, &groups, state.as_ref())?;
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
->>>>>>> Stashed changes
+            .evaluate_on_groups(&df, &groups, &state)?;
 
         ac.groups(); // Update the groups.
 
@@ -499,11 +489,6 @@ impl PhysicalExpr for EvalExpr {
         state: &ExecutionState,
     ) -> PolarsResult<AggregationContext<'a>> {
         let mut input = self.input.evaluate_on_groups(df, groups, state)?;
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
         let mut df = Cow::Borrowed(df);
         if self.non_element_columns.is_empty() {
             dbg!("todo! normalize_values");
@@ -522,15 +507,8 @@ impl PhysicalExpr for EvalExpr {
                     .for_each(|[start, length]| idxs.extend(*start..*start + *length)),
             }
             df = Cow::Owned(unsafe { non_element_df.take_slice_unchecked(&idxs) });
-<<<<<<< Updated upstream
         }
 
-=======
-            dbg!(&df);
-        }
-
->>>>>>> Stashed changes
->>>>>>> Stashed changes
         match self.variant {
             EvalVariant::List => {
                 let out = self.evaluate_on_list_chunked(
