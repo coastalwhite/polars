@@ -248,6 +248,10 @@ impl SeriesTrait for SeriesWrap<BooleanChunked> {
         ChunkUnique::arg_unique(&self.0)
     }
 
+    fn unique_id(&self) -> PolarsResult<Vec<IdxSize>> {
+        Ok(ChunkUnique::unique_id(&self.0))
+    }
+
     fn is_null(&self) -> BooleanChunked {
         self.0.is_null()
     }

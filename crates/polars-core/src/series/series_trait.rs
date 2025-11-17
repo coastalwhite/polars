@@ -454,6 +454,8 @@ pub trait SeriesTrait:
         polars_bail!(opq = arg_unique, self._dtype());
     }
 
+    fn unique_id(&self) -> PolarsResult<Vec<IdxSize>>;
+
     /// Get a mask of the null values.
     fn is_null(&self) -> BooleanChunked;
 

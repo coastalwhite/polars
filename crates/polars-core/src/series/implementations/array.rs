@@ -270,6 +270,11 @@ impl SeriesTrait for SeriesWrap<ArrayChunked> {
         Ok(IdxCa::from_vec(self.name().clone(), first))
     }
 
+    #[cfg(feature = "algorithm_group_by")]
+    fn unique_id(&self) -> PolarsResult<Vec<IdxSize>> {
+        Ok(ChunkUnique::unique_id(self.0.))
+    }
+
     fn is_null(&self) -> BooleanChunked {
         self.0.is_null()
     }

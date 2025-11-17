@@ -142,8 +142,11 @@ impl SeriesTrait for SeriesWrap<BinaryOffsetChunked> {
 
     #[cfg(feature = "algorithm_group_by")]
     fn n_unique(&self) -> PolarsResult<usize> {
-        // Only used by multi-key join validation, doesn't have to be optimal
-        self.group_tuples(true, false).map(|g| g.len())
+        ChunkUnique::n_unique(&self.0)
+    }
+
+    fn unique_id(&self) -> PolarsResult<Vec<IdxSize>> {
+        Ok(ChunkUnique::unique_id(&self.0))
     }
 
     fn rechunk(&self) -> Series {

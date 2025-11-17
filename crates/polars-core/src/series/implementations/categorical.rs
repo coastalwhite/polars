@@ -284,6 +284,11 @@ macro_rules! impl_cat_series {
                 self.0.physical().arg_unique()
             }
 
+            #[cfg(feature = "algorithm_group_by")]
+            fn unique_id(&self) -> PolarsResult<Vec<IdxSize>> {
+                Ok(self.0.physical().unique_id())
+            }
+
             fn is_null(&self) -> BooleanChunked {
                 self.0.physical().is_null()
             }

@@ -384,6 +384,8 @@ pub trait ChunkUnique {
     fn n_unique(&self) -> PolarsResult<usize> {
         self.arg_unique().map(|v| v.len())
     }
+
+    fn unique_id(&self) -> Vec<IdxSize>;
 }
 
 #[cfg(feature = "approx_unique")]
